@@ -151,26 +151,51 @@ def tab_dashboard():
     with st.spinner("Crunching the numbers..."):
         sh = get_sheet_object()
         
-        # Fetch Data (Safely)
-        try: dues_df = pd.DataFrame(sh.worksheet("CustomerDues").get_all_records())
-        except: dues_df = pd.DataFrame(columns=["Amount"])
-        
-        try: rx_df = pd.DataFrame(sh.worksheet("PaymentsReceived").get_all_records())
-        except: rx_df = pd.DataFrame(columns=["Amount", "Date"])
-        
-        # 1. Total Market Outstanding (Simple approximation: Total Dues - Total Rx)
-        # Note: In a real DB we would sum per party, but for a dashboard overview, global sum is a good indicator
-        total_sold = pd.to_numeric(dues_df["Amount"], errors='coerce').sum()
-        total_recvd = pd.to_numeric(rx_df["Amount"], errors='coerce').sum()
+        # Helper to safely get total amount
+        def get_total(sheet_name):
+            try:
+                data = sh.worksheet(sheet_name).get_all_records()
+                df = pd.DataFrame(data)
+                
+                # Check if data exists and "Amount" column is present
+                if df.empty or "Amount" not in df.columns:
+                    return 0.0
+                
+                # Clean and sum the amount
+                # This handles text like "1,000" or empty cells safely
+                clean_amounts = pd.to_numeric(df["Amount"].astype(str).str.replace(",", ""), errors='coerce')
+                return clean_amounts.sum()
+            except:
+                return 0.0
+
+        # Helper to get Today's Collection
+        def get_todays_collection():
+            try:
+                data = sh.worksheet("PaymentsReceived").get_all_records()
+                df = pd.DataFrame(data)
+                
+                if df.empty or "Amount" not in df.columns or "Date" not in df.columns:
+                    return 0.0
+                
+                today_str = str(date.today())
+                # Ensure Date is string for comparison
+                df["Date"] = df["Date"].astype(str)
+                
+                # Filter for today
+                todays_df = df[df["Date"] == today_str]
+                
+                clean_amounts = pd.to_numeric(todays_df["Amount"].astype(str).str.replace(",", ""), errors='coerce')
+                return clean_amounts.sum()
+            except:
+                return 0.0
+
+        # 1. Calculate Metrics
+        total_sold = get_total("CustomerDues")
+        total_recvd = get_total("PaymentsReceived")
         market_outstanding = total_sold - total_recvd
+        todays_coll = get_todays_collection()
         
-        # 2. Today's Collection
-        today_str = str(date.today())
-        # Filter payments where Date == Today (handling string/date formats)
-        rx_df["Date"] = rx_df["Date"].astype(str)
-        todays_coll = pd.to_numeric(rx_df[rx_df["Date"] == today_str]["Amount"], errors='coerce').sum()
-        
-        # UI: Top Metrics Row
+        # 2. UI: Top Metrics Row
         col1, col2, col3 = st.columns(3)
         col1.metric("Total Market Outstanding", f"₹{market_outstanding:,.0f}", delta="Receivable")
         col2.metric("Today's Collection", f"₹{todays_coll:,.0f}", delta="Cash Flow")
@@ -370,3 +395,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
