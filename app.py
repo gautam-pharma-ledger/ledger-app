@@ -54,7 +54,7 @@ def main():
     st.write("Welcome to the ledger application.")
 
     # 1. Load the data (Change 'Sheet1' if your tab has a different name)
-    df = load_data("Sheet1")
+    df = load_data("CustomerDues")
     
     # 2. Display the data
     if not df.empty:
@@ -65,4 +65,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
