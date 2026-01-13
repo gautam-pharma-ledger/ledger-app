@@ -10,7 +10,7 @@ st.set_page_config(page_title="Gautam Pharma Ledger", layout="wide")
 def get_gsheet_client():
     """Connects to Google Sheets using Streamlit Secrets."""
     try:
-        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         # This grabs the credentials you saved in Streamlit secrets
         credentials = Credentials.from_service_account_info(
             st.secrets["gcp_service_account"],
@@ -65,3 +65,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
