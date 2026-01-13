@@ -1,0 +1,7 @@
+streamlit
+pandas
+openai
+gspread
+oauth2client
+fpdf
+xlsxwriter
