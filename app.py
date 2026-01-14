@@ -142,11 +142,14 @@ def generate_ledger_pdf(party_name, dataframe, total_due, start_d, end_d):
 
 # --- 4. APP MODULES ---
 
-# --- A. DASHBOARD (Safe Version) ---
+# --- A. DASHBOARD ---
 def tab_dashboard():
     st.markdown("## 📊 Executive Dashboard")
     st.markdown("---")
     
+    if st.button("🔄 Refresh Data"):
+        st.rerun()
+
     with st.spinner("Crunching the numbers..."):
         sh = get_sheet_object()
         
@@ -155,7 +158,9 @@ def tab_dashboard():
                 data = sh.worksheet(sheet_name).get_all_records()
                 df = pd.DataFrame(data)
                 if df.empty or "Amount" not in df.columns: return 0.0
-                return pd.to_numeric(df["Amount"].astype(str).str.replace(",", ""), errors='coerce').sum()
+                # Remove commas, currency symbols, and convert to float
+                clean_vals = df["Amount"].astype(str).str.replace(",", "").str.replace("₹", "").str.replace("Rs", "")
+                return pd.to_numeric(clean_vals, errors='coerce').sum()
             except: return 0.0
 
         def get_todays_coll():
@@ -165,7 +170,9 @@ def tab_dashboard():
                 if df.empty or "Amount" not in df.columns or "Date" not in df.columns: return 0.0
                 today_str = str(date.today())
                 df["Date"] = df["Date"].astype(str)
-                return pd.to_numeric(df[df["Date"] == today_str]["Amount"].astype(str).str.replace(",", ""), errors='coerce').sum()
+                todays_df = df[df["Date"] == today_str]
+                clean_vals = todays_df["Amount"].astype(str).str.replace(",", "").str.replace("₹", "")
+                return pd.to_numeric(clean_vals, errors='coerce').sum()
             except: return 0.0
 
         total_sold = get_total("CustomerDues")
@@ -184,7 +191,7 @@ def tab_dashboard():
         c1.info("💡 **Tip:** Go to 'Scan (AI)' to upload today's journal pages.")
         c2.info("💡 **Tip:** Go to 'Ledger' to send payment reminders.")
 
-# --- B. SCANNER (Complete & Fixed) ---
+# --- B. SCANNER ---
 def tab_scan_ai():
     st.header("📸 AI Journal Scanner")
     existing_parties = get_all_party_names()
@@ -270,29 +277,33 @@ def tab_scan_ai():
                 try:
                     # Save Dues
                     if final_dues: 
-                        rows = [[txn_date, r["Party"], r["Amount"]] for r in final_dues if r["Party"]]
+                        rows = [[txn_date, r["Party"], float(r["Amount"])] for r in final_dues if r["Party"]]
                         if rows: sh.worksheet("CustomerDues").append_rows(rows)
                     
                     # Save Rx
                     if final_rx: 
-                        rows = [[txn_date, r["Party"], r["Amount"], r["Mode"]] for r in final_rx if r["Party"]]
+                        rows = [[txn_date, r["Party"], float(r["Amount"]), r["Mode"]] for r in final_rx if r["Party"]]
                         if rows: sh.worksheet("PaymentsReceived").append_rows(rows)
                     
                     # Save Suppliers
                     if final_tx: 
-                        rows = [[txn_date, r["Supplier"], r["Amount"], r["Mode"]] for r in final_tx if r["Supplier"]]
+                        rows = [[txn_date, r["Supplier"], float(r["Amount"]), r["Mode"]] for r in final_tx if r["Supplier"]]
                         if rows: sh.worksheet("PaymentsToSuppliers").append_rows(rows)
                     
                     # Save Purchases
                     if final_gx: 
-                        rows = [[txn_date, r["Supplier"], r["Items"], r["Amount"]] for r in final_gx if r["Supplier"]]
+                        rows = [[txn_date, r["Supplier"], r["Items"], float(r["Amount"])] for r in final_gx if r["Supplier"]]
                         if rows: sh.worksheet("GoodsReceived").append_rows(rows)
                     
-                    st.success("✅ Data saved securely to Google Sheets!")
+                    # SUCCESS MESSAGE WITH DELAY
+                    st.success("✅ SUCCESS! Data saved to Google Sheets.")
+                    st.write("Refreshing app in 3 seconds...")
+                    time.sleep(3) # Wait so you can read the message
                     del st.session_state['extracted_data']
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Save failed: {e}")
+                    st.error(f"❌ Save Failed: {e}")
+                    # We do NOT rerun here so you can read the error
 
 # --- C. LEDGER ---
 def tab_ledger_view():
@@ -323,7 +334,10 @@ def tab_ledger_view():
                 df = df[(df["Date"] >= start_date) & (df["Date"] <= end_date)]
                 
                 for _, r in df.iterrows():
-                    amt = float(str(r.get("Amount", 0)).replace(",", ""))
+                    amt_str = str(r.get("Amount", 0)).replace(",", "").replace("₹", "")
+                    try: amt = float(amt_str)
+                    except: amt = 0.0
+                    
                     entry = {
                         "Date": r["Date"], "Description": desc_label,
                         "Debit": amt if type_cr_dr == "debit" else 0,
@@ -392,4 +406,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
