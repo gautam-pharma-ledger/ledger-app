@@ -11,7 +11,7 @@ import difflib
 import urllib.parse
 import time
 
-# --- CONFIGURATION & STYLE ---
+# --- CONFIGURATION ---
 st.set_page_config(page_title="Gautam Pharma Ledger", layout="wide", page_icon="💊")
 
 st.markdown("""
@@ -22,58 +22,80 @@ st.markdown("""
         padding: 20px;
         box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
     }
-    .stButton>button {
-        width: 100%;
-        border-radius: 8px;
-        height: 3em;
-    }
+    .stButton>button { width: 100%; border-radius: 8px; height: 3em; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 1. CONNECTION & CACHING ---
+# --- 1. CONNECTION & AUTO-REPAIR ---
 @st.cache_resource
 def get_gsheet_client():
     try:
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        credentials = Credentials.from_service_account_info(
-            st.secrets["gcp_service_account"],
-            scopes=scopes
-        )
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        credentials = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
         return gspread.authorize(credentials)
     except Exception as e:
         st.error(f"❌ Connection Error: {e}")
         return None
 
+def check_and_fix_headers():
+    """Checks if headers exist. If not, adds them to Row 1."""
+    client = get_gsheet_client()
+    if not client: return
+    
+    try:
+        sh = client.open("Gautam_Pharma_Ledger")
+        
+        # Define correct headers for each sheet
+        required_headers = {
+            "CustomerDues": ["Date", "Party", "Amount"],
+            "PaymentsReceived": ["Date", "Party", "Amount", "Mode"],
+            "PaymentsToSuppliers": ["Date", "Supplier", "Amount", "Mode"],
+            "GoodsReceived": ["Date", "Supplier", "Items", "Amount"]
+        }
+        
+        for sheet_name, headers in required_headers.items():
+            try:
+                ws = sh.worksheet(sheet_name)
+                existing_headers = ws.row_values(1)
+                
+                # If row 1 is empty OR doesn't match the expected "Date" column
+                if not existing_headers or existing_headers[0] != "Date":
+                    st.toast(f"🔧 Fixing headers for {sheet_name}...", icon="🛠️")
+                    # Insert headers at row 1
+                    ws.insert_row(headers, 1)
+            except:
+                pass # Sheet might not exist, skip
+    except:
+        pass
+
+# Run repair once on load
+check_and_fix_headers()
+
 @st.cache_resource
 def get_sheet_object():
     client = get_gsheet_client()
     if client:
-        try:
-            return client.open("Gautam_Pharma_Ledger")
+        try: return client.open("Gautam_Pharma_Ledger")
         except: return None
     return None
 
-# CACHED DATA FETCHING
-@st.cache_data(ttl=10) # Short cache to keep dashboard fresh
+@st.cache_data(ttl=10)
 def fetch_sheet_data(sheet_name):
     try:
         sh = get_sheet_object()
         if not sh: return pd.DataFrame()
+        # get_all_records headers=1 means Row 1 is the header
         data = sh.worksheet(sheet_name).get_all_records()
         return pd.DataFrame(data)
-    except:
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 def get_all_party_names():
     names = set()
     for sheet in ["CustomerDues", "PaymentsReceived", "GoodsReceived", "PaymentsToSuppliers"]:
         df = fetch_sheet_data(sheet)
         if not df.empty:
-            if "Party" in df.columns: names.update(df["Party"].dropna().astype(str).unique())
-            if "Supplier" in df.columns: names.update(df["Supplier"].dropna().astype(str).unique())
+            if "Party" in df.columns: names.update(df["Party"].astype(str).unique())
+            if "Supplier" in df.columns: names.update(df["Supplier"].astype(str).unique())
     return sorted([n.strip() for n in list(names) if n.strip()])
 
 # --- 2. AI EXTRACTION ---
@@ -82,23 +104,11 @@ def run_ai_extraction(image_bytes):
         api_key = st.secrets["OPENAI_API_KEY"]
         client = OpenAI(api_key=api_key)
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
-        
-        prompt = """
-        Analyze this handwritten journal page. Map the sections as follows:
-        - "RETAILERS DUES" -> CustomerDues
-        - "PAYMENT RECEIVED" -> PaymentsReceived
-        - "PAYMENT TO SUPPLIER" -> PaymentsToSuppliers
-        - "PURCHASE DETAILS" -> GoodsReceived
-
-        Return ONLY valid JSON with this structure:
-        {
-          "Date": "YYYY-MM-DD", 
-          "CustomerDues": [{"Party": "Name", "Amount": 0}], 
-          "PaymentsReceived": [{"Party": "Name", "Amount": 0, "Mode": "Cash"}], 
-          "GoodsReceived": [{"Supplier": "Name", "Items": "Desc", "Amount": 0}], 
-          "PaymentsToSuppliers": [{"Supplier": "Name", "Amount": 0, "Mode": "Cash"}] 
-        }
-        """
+        prompt = """Analyze this handwritten journal page. Return JSON:
+        { "Date": "YYYY-MM-DD", "CustomerDues": [{"Party": "Name", "Amount": 0}],
+          "PaymentsReceived": [{"Party": "Name", "Amount": 0, "Mode": "Cash"}],
+          "GoodsReceived": [{"Supplier": "Name", "Items": "Desc", "Amount": 0}],
+          "PaymentsToSuppliers": [{"Supplier": "Name", "Amount": 0, "Mode": "Cash"}] }"""
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}]}],
@@ -139,46 +149,30 @@ def generate_ledger_pdf(party_name, dataframe, total_due, start_d, end_d):
     pdf.cell(190, 10, f"Net Balance: Rs. {total_due:,.2f}  [{status}]", ln=True)
     return pdf.output(dest='S').encode('latin-1')
 
-# --- 4. APP MODULES ---
-
+# --- 4. TABS ---
 def tab_dashboard():
     st.markdown("## 📊 Executive Dashboard")
     st.markdown("---")
-    
     if st.button("🔄 Force Refresh Data"):
         st.cache_data.clear()
         st.rerun()
 
-    # Use Cached Data
     dues_df = fetch_sheet_data("CustomerDues")
     rx_df = fetch_sheet_data("PaymentsReceived")
 
     def clean_sum(df):
         if df.empty or "Amount" not in df.columns: return 0.0
-        # Aggressive cleaning
-        clean_vals = df["Amount"].astype(str).str.replace(r'[^\d.]', '', regex=True) # Remove everything except numbers and dots
+        clean_vals = df["Amount"].astype(str).str.replace(r'[^\d.]', '', regex=True)
         return pd.to_numeric(clean_vals, errors='coerce').sum()
 
     total_sold = clean_sum(dues_df)
     total_recvd = clean_sum(rx_df)
     market_outstanding = total_sold - total_recvd
     
-    todays_coll = 0.0
-    if not rx_df.empty and "Date" in rx_df.columns:
-        today_str = str(date.today())
-        rx_df["Date"] = rx_df["Date"].astype(str)
-        todays_df = rx_df[rx_df["Date"] == today_str]
-        todays_coll = clean_sum(todays_df)
-
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Market Outstanding", f"₹{market_outstanding:,.0f}", delta="Receivable")
-    col2.metric("Today's Collection", f"₹{todays_coll:,.0f}", delta="Cash Flow")
-    col3.metric("Total Sales (Lifetime)", f"₹{total_sold:,.0f}")
-    
-    st.markdown("---")
-    c1, c2 = st.columns(2)
-    c1.info("💡 **Tip:** Use 'Scan (AI)' for daily entries.")
-    c2.info("💡 **Tip:** 'Ledger' allows PDF downloads & WhatsApp sharing.")
+    col2.metric("Total Collections", f"₹{total_recvd:,.0f}", delta="Cash In")
+    col3.metric("Total Sales", f"₹{total_sold:,.0f}")
 
 def tab_scan_ai():
     st.header("📸 AI Journal Scanner")
@@ -192,22 +186,17 @@ def tab_scan_ai():
                 if data:
                     st.session_state['extracted_data'] = data
                     st.rerun()
-
     else:
-        # REVIEW SCREEN
         data = st.session_state['extracted_data']
         st.success("✅ Image Read! Review below.")
-        
         with st.form("review_form"):
             def smart_input(label, scanned_val, key_suffix):
                 final_val = scanned_val
                 if scanned_val and existing_parties:
                     matches = difflib.get_close_matches(scanned_val, existing_parties, n=1, cutoff=0.7)
-                    if matches and matches[0] != scanned_val:
-                        final_val = matches[0]
+                    if matches and matches[0] != scanned_val: final_val = matches[0]
                 return st.text_input(label, final_val, key=key_suffix)
 
-            # 1. Retailers Dues
             st.markdown("##### 1. Retailers Dues")
             dues = data.get("CustomerDues", [])
             final_dues = []
@@ -217,7 +206,6 @@ def tab_scan_ai():
                 a = c2.number_input("Amount", value=float(d.get("Amount", 0)), key=f"d_a_{i}")
                 final_dues.append({"Party": p, "Amount": a})
             
-            # 2. Payments Rx
             st.markdown("##### 2. Payments Received")
             rx = data.get("PaymentsReceived", [])
             final_rx = []
@@ -228,7 +216,6 @@ def tab_scan_ai():
                 m = c3.selectbox("Mode", ["Cash", "UPI"], key=f"r_m_{i}")
                 final_rx.append({"Party": p, "Amount": a, "Mode": m})
 
-            # 3. Payments To Suppliers
             st.markdown("##### 3. Payments To Suppliers")
             tx = data.get("PaymentsToSuppliers", [])
             final_tx = []
@@ -239,7 +226,6 @@ def tab_scan_ai():
                 m = c3.selectbox("Mode", ["Cash", "UPI"], key=f"t_m_{i}")
                 final_tx.append({"Supplier": s, "Amount": a, "Mode": m})
             
-            # 4. Purchase Details
             st.markdown("##### 4. Purchase Details")
             gx = data.get("GoodsReceived", [])
             final_gx = []
@@ -250,129 +236,77 @@ def tab_scan_ai():
                 a = c3.number_input("Amount", value=float(d.get("Amount", 0)), key=f"g_a_{i}")
                 final_gx.append({"Supplier": s, "Items": it, "Amount": a})
 
-            submitted = st.form_submit_button("💾 Save to Cloud")
-            
-            if submitted:
+            if st.form_submit_button("💾 Save to Cloud"):
                 sh = get_sheet_object()
                 txn_date = data.get("Date", str(date.today()))
-                
                 try:
-                    # LOGGING for Debug
-                    st.write("🔄 Connecting to Google Sheets...")
-                    
-                    # Helper to clean Rows
                     def clean_rows(raw_rows):
                         cleaned = []
                         for row in raw_rows:
-                            # Convert all elements to string or float, remove None
-                            new_row = []
-                            for item in row:
-                                if isinstance(item, (int, float)): new_row.append(item)
-                                else: new_row.append(str(item).strip())
-                            cleaned.append(new_row)
+                            cleaned.append([item if isinstance(item, (int, float)) else str(item).strip() for item in row])
                         return cleaned
 
-                    if final_dues: 
-                        rows = [[txn_date, r["Party"], float(r["Amount"])] for r in final_dues if r["Party"]]
-                        st.write(f"📝 Saving {len(rows)} rows to CustomerDues...")
-                        sh.worksheet("CustomerDues").append_rows(clean_rows(rows))
-                    
-                    if final_rx: 
-                        rows = [[txn_date, r["Party"], float(r["Amount"]), r["Mode"]] for r in final_rx if r["Party"]]
-                        st.write(f"📝 Saving {len(rows)} rows to PaymentsReceived...")
-                        sh.worksheet("PaymentsReceived").append_rows(clean_rows(rows))
-                    
-                    if final_tx: 
-                        rows = [[txn_date, r["Supplier"], float(r["Amount"]), r["Mode"]] for r in final_tx if r["Supplier"]]
-                        st.write(f"📝 Saving {len(rows)} rows to PaymentsToSuppliers...")
-                        sh.worksheet("PaymentsToSuppliers").append_rows(clean_rows(rows))
-                    
-                    if final_gx: 
-                        rows = [[txn_date, r["Supplier"], r["Items"], float(r["Amount"])] for r in final_gx if r["Supplier"]]
-                        st.write(f"📝 Saving {len(rows)} rows to GoodsReceived...")
-                        sh.worksheet("GoodsReceived").append_rows(clean_rows(rows))
+                    if final_dues: sh.worksheet("CustomerDues").append_rows(clean_rows([[txn_date, r["Party"], float(r["Amount"])] for r in final_dues if r["Party"]]))
+                    if final_rx: sh.worksheet("PaymentsReceived").append_rows(clean_rows([[txn_date, r["Party"], float(r["Amount"], r["Mode"])] for r in final_rx if r["Party"]]))
+                    if final_tx: sh.worksheet("PaymentsToSuppliers").append_rows(clean_rows([[txn_date, r["Supplier"], float(r["Amount"]), r["Mode"]] for r in final_tx if r["Supplier"]]))
+                    if final_gx: sh.worksheet("GoodsReceived").append_rows(clean_rows([[txn_date, r["Supplier"], r["Items"], float(r["Amount"])] for r in final_gx if r["Supplier"]]))
                     
                     st.success("✅ SAVED SUCCESSFULLY!")
-                    st.balloons()
-                    st.cache_data.clear() # Clear cache so Dashboard updates
-                    
-                    # DO NOT RERUN - Let user see the success message
-                    st.info("Click the button below to scan a new image.")
-                    
-                except Exception as e:
-                    st.error(f"❌ Save Failed: {e}")
-
-        if st.button("📸 Scan New Image"):
+                    st.cache_data.clear()
+                    time.sleep(1)
+                    del st.session_state['extracted_data']
+                    st.rerun()
+                except Exception as e: st.error(f"❌ Save Failed: {e}")
+        
+        if st.button("Cancel / New Scan"):
             del st.session_state['extracted_data']
             st.rerun()
 
 def tab_ledger_view():
     st.header("📒 Party Ledger")
-    
-    col_sel, col_date1, col_date2 = st.columns([2, 1, 1])
-    with col_sel:
-        all_parties = get_all_party_names()
-        sel_party = st.selectbox("Select Party", ["Select..."] + all_parties)
-    with col_date1: start_date = st.date_input("From Date", date.today() - timedelta(days=30))
-    with col_date2: end_date = st.date_input("To Date", date.today())
+    col_sel, col_d1, col_d2 = st.columns([2, 1, 1])
+    all_parties = get_all_party_names()
+    sel_party = col_sel.selectbox("Select Party", ["Select..."] + all_parties)
+    start_date = col_d1.date_input("From", date.today() - timedelta(days=365)) # DEFAULT TO 1 YEAR BACK
+    end_date = col_d2.date_input("To", date.today())
         
     if sel_party != "Select...":
         ledger_data = []
-        
-        def process_cached_sheet(sheet_name, desc, type_cr_dr):
-            df = fetch_sheet_data(sheet_name)
+        def process(sheet, desc, type_cd):
+            df = fetch_sheet_data(sheet)
             if df.empty: return
-            
             df.columns = df.columns.str.strip()
             p_col = "Party" if "Party" in df.columns else "Supplier"
             if p_col not in df.columns: return
-
             df[p_col] = df[p_col].astype(str).str.strip()
             df = df[df[p_col] == sel_party]
             df["Date"] = pd.to_datetime(df["Date"], errors='coerce').dt.date
             df = df[(df["Date"] >= start_date) & (df["Date"] <= end_date)]
-
             for _, r in df.iterrows():
-                # Aggressive cleaning of Amounts
-                raw_amt = str(r.get("Amount", 0))
-                clean_amt = "".join(filter(lambda x: x.isdigit() or x == '.', raw_amt))
-                try: amt = float(clean_amt)
+                try: amt = float(str(r.get("Amount", 0)).replace(",", ""))
                 except: amt = 0.0
-                
                 entry = {"Date": r["Date"], "Description": desc, "Debit": 0, "Credit": 0}
-                if type_cr_dr == "debit": entry["Debit"] = amt
+                if type_cd == "debit": entry["Debit"] = amt
                 else: entry["Credit"] = amt
                 if "Mode" in r: entry["Description"] += f" ({r['Mode']})"
                 ledger_data.append(entry)
 
-        process_cached_sheet("CustomerDues", "Sale/Due", "debit")
-        process_cached_sheet("PaymentsReceived", "Payment Rx", "credit")
-        process_cached_sheet("GoodsReceived", "Purchase", "credit")
-        process_cached_sheet("PaymentsToSuppliers", "Payment Made", "debit")
+        process("CustomerDues", "Sale/Due", "debit")
+        process("PaymentsReceived", "Payment Rx", "credit")
+        process("GoodsReceived", "Purchase", "credit")
+        process("PaymentsToSuppliers", "Payment Made", "debit")
 
         if ledger_data:
             l_df = pd.DataFrame(ledger_data).sort_values(by="Date")
-            total_debit = l_df["Debit"].sum()
-            total_credit = l_df["Credit"].sum()
-            net_bal = total_debit - total_credit
-            
+            bal = l_df["Debit"].sum() - l_df["Credit"].sum()
             c1, c2, c3 = st.columns(3)
-            c1.metric("Sold (Debit)", f"₹{total_debit:,.0f}")
-            c2.metric("Received (Credit)", f"₹{total_credit:,.0f}")
-            status = "TO RECEIVE" if net_bal > 0 else "TO PAY"
-            c3.metric("Net Balance", f"₹{abs(net_bal):,.0f}", status, delta_color="inverse")
+            c1.metric("Sold", f"₹{l_df['Debit'].sum():,.0f}")
+            c2.metric("Received", f"₹{l_df['Credit'].sum():,.0f}")
+            c3.metric("Balance", f"₹{abs(bal):,.0f}", "Receivable" if bal>0 else "Payable")
             
-            wa_msg = f"Hello {sel_party}, your outstanding balance is Rs. {abs(net_bal):,.2f}. Please pay ASAP."
-            wa_link = f"https://wa.me/?text={urllib.parse.quote(wa_msg)}"
-            
-            act1, act2 = st.columns(2)
-            with act1:
-                pdf_bytes = generate_ledger_pdf(sel_party, l_df, net_bal, start_date, end_date)
-                st.download_button("📄 Download PDF", data=pdf_bytes, file_name=f"{sel_party}_Statement.pdf", mime="application/pdf", use_container_width=True)
-            with act2:
-                st.link_button("💬 Share via WhatsApp", wa_link, use_container_width=True)
-
-            st.dataframe(l_df, use_container_width=True, hide_index=True)
+            wa_link = f"https://wa.me/?text={urllib.parse.quote(f'Hello {sel_party}, Balance: {bal}')}"
+            st.link_button("💬 WhatsApp", wa_link)
+            st.dataframe(l_df, use_container_width=True)
         else:
             st.info("No transactions found.")
 
@@ -387,29 +321,20 @@ def tab_manual_entry():
         if st.form_submit_button("Save"):
             sh = get_sheet_object()
             if not sh: st.stop()
-            
-            # Simple saving without batch logic for manual entry
             try:
                 row = []
-                if type_ == "Customer Due": 
-                    sh.worksheet("CustomerDues").append_row([str(date.today()), party, amt])
-                elif type_ == "Payment Rx": 
-                    sh.worksheet("PaymentsReceived").append_row([str(date.today()), party, amt, "Cash"])
-                elif type_ == "Supplier Payment": 
-                    sh.worksheet("PaymentsToSuppliers").append_row([str(date.today()), party, amt, "Cash"])
-                elif type_ == "Purchase": 
-                    sh.worksheet("GoodsReceived").append_row([str(date.today()), party, "Goods", amt])
-                
+                if type_ == "Customer Due": sh.worksheet("CustomerDues").append_row([str(date.today()), party, amt])
+                elif type_ == "Payment Rx": sh.worksheet("PaymentsReceived").append_row([str(date.today()), party, amt, "Cash"])
+                elif type_ == "Supplier Payment": sh.worksheet("PaymentsToSuppliers").append_row([str(date.today()), party, amt, "Cash"])
+                elif type_ == "Purchase": sh.worksheet("GoodsReceived").append_row([str(date.today()), party, "Goods", amt])
                 st.success("Saved!")
                 st.cache_data.clear()
-            except Exception as e:
-                st.error(f"Error: {e}")
+            except Exception as e: st.error(f"Error: {e}")
 
-# --- MAIN MENU ---
+# --- MAIN ---
 def main():
     st.sidebar.title("💊 Gautam Pharma")
     menu = st.sidebar.radio("Menu", ["📊 Dashboard", "📸 Scan (AI)", "📒 Ledger & PDF", "⌨️ Manual Entry"])
-    
     if menu == "📊 Dashboard": tab_dashboard()
     elif menu == "📸 Scan (AI)": tab_scan_ai()
     elif menu == "📒 Ledger & PDF": tab_ledger_view()
