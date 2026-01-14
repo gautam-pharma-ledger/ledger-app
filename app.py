@@ -142,7 +142,7 @@ def generate_ledger_pdf(party_name, dataframe, total_due, start_d, end_d):
 
 # --- 4. APP MODULES ---
 
-# --- A. DASHBOARD (Fixed for KeyErrors) ---
+# --- A. DASHBOARD (Safe Version) ---
 def tab_dashboard():
     st.markdown("## 📊 Executive Dashboard")
     st.markdown("---")
@@ -184,7 +184,7 @@ def tab_dashboard():
         c1.info("💡 **Tip:** Go to 'Scan (AI)' to upload today's journal pages.")
         c2.info("💡 **Tip:** Go to 'Ledger' to send payment reminders.")
 
-# --- B. SCANNER (Fixed Missing Sections & Save Error) ---
+# --- B. SCANNER (Complete & Fixed) ---
 def tab_scan_ai():
     st.header("📸 AI Journal Scanner")
     existing_parties = get_all_party_names()
@@ -238,7 +238,7 @@ def tab_scan_ai():
                 m = c3.selectbox("Mode", ["Cash", "UPI"], key=f"r_m_{i}")
                 final_rx.append({"Party": p, "Amount": a, "Mode": m})
 
-            # 3. PAYMENTS TO SUPPLIERS (Now Included!)
+            # 3. PAYMENTS TO SUPPLIERS
             st.markdown("##### 3. Payments To Suppliers")
             tx = data.get("PaymentsToSuppliers", [])
             final_tx = []
@@ -250,7 +250,7 @@ def tab_scan_ai():
                 m = c3.selectbox("Mode", ["Cash", "UPI"], key=f"t_m_{i}")
                 final_tx.append({"Supplier": s, "Amount": a, "Mode": m})
             
-            # 4. PURCHASE DETAILS (Now Included!)
+            # 4. PURCHASE DETAILS
             st.markdown("##### 4. Purchase Details")
             gx = data.get("GoodsReceived", [])
             final_gx = []
@@ -278,12 +278,12 @@ def tab_scan_ai():
                         rows = [[txn_date, r["Party"], r["Amount"], r["Mode"]] for r in final_rx if r["Party"]]
                         if rows: sh.worksheet("PaymentsReceived").append_rows(rows)
                     
-                    # Save Suppliers (Fixed NameError)
+                    # Save Suppliers
                     if final_tx: 
                         rows = [[txn_date, r["Supplier"], r["Amount"], r["Mode"]] for r in final_tx if r["Supplier"]]
                         if rows: sh.worksheet("PaymentsToSuppliers").append_rows(rows)
                     
-                    # Save Purchases (Fixed NameError)
+                    # Save Purchases
                     if final_gx: 
                         rows = [[txn_date, r["Supplier"], r["Items"], r["Amount"]] for r in final_gx if r["Supplier"]]
                         if rows: sh.worksheet("GoodsReceived").append_rows(rows)
@@ -353,3 +353,43 @@ def tab_ledger_view():
             
             wa_msg = f"Hello {sel_party}, your outstanding balance with Gautam Pharma from {start_date} to {end_date} is Rs. {abs(net_bal):,.2f}. Please pay at the earliest."
             wa_link = f"https://wa.me/?text={urllib.parse.quote(wa_msg)}"
+            
+            act1, act2 = st.columns(2)
+            with act1:
+                pdf_bytes = generate_ledger_pdf(sel_party, l_df, net_bal, start_date, end_date)
+                st.download_button("📄 Download PDF", data=pdf_bytes, file_name=f"{sel_party}_Statement.pdf", mime="application/pdf", use_container_width=True)
+            with act2:
+                st.link_button("💬 Share via WhatsApp", wa_link, use_container_width=True)
+
+            st.markdown("### Transaction Details")
+            st.dataframe(l_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No transactions found in this date range.")
+
+# --- MAIN MENU ---
+def main():
+    st.sidebar.title("💊 Gautam Pharma")
+    menu = st.sidebar.radio("Menu", ["📊 Dashboard", "📸 Scan (AI)", "📒 Ledger & PDF", "⌨️ Manual Entry"])
+    
+    if menu == "📊 Dashboard": tab_dashboard()
+    elif menu == "📸 Scan (AI)": tab_scan_ai()
+    elif menu == "📒 Ledger & PDF": tab_ledger_view()
+    elif menu == "⌨️ Manual Entry":
+        st.header("⌨️ Manual Entry")
+        all_parties = get_all_party_names()
+        with st.form("manual"):
+            party = st.selectbox("Party", ["Select...", "Add New"] + all_parties)
+            if party == "Add New": party = st.text_input("Name")
+            amt = st.number_input("Amount")
+            type_ = st.selectbox("Type", ["Customer Due", "Payment Rx", "Supplier Payment", "Purchase"])
+            if st.form_submit_button("Save"):
+                sh = get_sheet_object()
+                if type_ == "Customer Due": sh.worksheet("CustomerDues").append_row([str(date.today()), party, amt])
+                elif type_ == "Payment Rx": sh.worksheet("PaymentsReceived").append_row([str(date.today()), party, amt, "Cash"])
+                elif type_ == "Supplier Payment": sh.worksheet("PaymentsToSuppliers").append_row([str(date.today()), party, amt, "Cash"])
+                elif type_ == "Purchase": sh.worksheet("GoodsReceived").append_row([str(date.today()), party, "Goods", amt])
+                st.success("Saved!")
+
+if __name__ == "__main__":
+    main()
+
