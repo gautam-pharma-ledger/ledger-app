@@ -1,7 +1,7 @@
 streamlit
 pandas
-openai
 gspread
-oauth2client
+google-auth
+openai
 fpdf
-xlsxwriter
+openpyxl
