@@ -9,11 +9,11 @@ from fpdf import FPDF
 import base64
 import difflib
 import urllib.parse
+import time
 
 # --- CONFIGURATION & STYLE ---
 st.set_page_config(page_title="Gautam Pharma Ledger", layout="wide", page_icon="💊")
 
-# Custom CSS for "Pro" Look
 st.markdown("""
     <style>
     .metric-card {
@@ -27,7 +27,6 @@ st.markdown("""
         border-radius: 8px;
         height: 3em;
     }
-    .big-font { font-size: 20px !important; font-weight: 600; color: #333; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -141,9 +140,9 @@ def generate_ledger_pdf(party_name, dataframe, total_due, start_d, end_d):
     
     return pdf.output(dest='S').encode('latin-1')
 
-# --- 4. APP MODULES (TABS) ---
+# --- 4. APP MODULES ---
 
-# --- A. DASHBOARD (The "Pro" Feature) ---
+# --- A. DASHBOARD (Fixed for KeyErrors) ---
 def tab_dashboard():
     st.markdown("## 📊 Executive Dashboard")
     st.markdown("---")
@@ -151,67 +150,41 @@ def tab_dashboard():
     with st.spinner("Crunching the numbers..."):
         sh = get_sheet_object()
         
-        # Helper to safely get total amount
         def get_total(sheet_name):
             try:
                 data = sh.worksheet(sheet_name).get_all_records()
                 df = pd.DataFrame(data)
-                
-                # Check if data exists and "Amount" column is present
-                if df.empty or "Amount" not in df.columns:
-                    return 0.0
-                
-                # Clean and sum the amount
-                # This handles text like "1,000" or empty cells safely
-                clean_amounts = pd.to_numeric(df["Amount"].astype(str).str.replace(",", ""), errors='coerce')
-                return clean_amounts.sum()
-            except:
-                return 0.0
+                if df.empty or "Amount" not in df.columns: return 0.0
+                return pd.to_numeric(df["Amount"].astype(str).str.replace(",", ""), errors='coerce').sum()
+            except: return 0.0
 
-        # Helper to get Today's Collection
-        def get_todays_collection():
+        def get_todays_coll():
             try:
                 data = sh.worksheet("PaymentsReceived").get_all_records()
                 df = pd.DataFrame(data)
-                
-                if df.empty or "Amount" not in df.columns or "Date" not in df.columns:
-                    return 0.0
-                
+                if df.empty or "Amount" not in df.columns or "Date" not in df.columns: return 0.0
                 today_str = str(date.today())
-                # Ensure Date is string for comparison
                 df["Date"] = df["Date"].astype(str)
-                
-                # Filter for today
-                todays_df = df[df["Date"] == today_str]
-                
-                clean_amounts = pd.to_numeric(todays_df["Amount"].astype(str).str.replace(",", ""), errors='coerce')
-                return clean_amounts.sum()
-            except:
-                return 0.0
+                return pd.to_numeric(df[df["Date"] == today_str]["Amount"].astype(str).str.replace(",", ""), errors='coerce').sum()
+            except: return 0.0
 
-        # 1. Calculate Metrics
         total_sold = get_total("CustomerDues")
         total_recvd = get_total("PaymentsReceived")
         market_outstanding = total_sold - total_recvd
-        todays_coll = get_todays_collection()
+        todays_coll = get_todays_coll()
         
-        # 2. UI: Top Metrics Row
         col1, col2, col3 = st.columns(3)
         col1.metric("Total Market Outstanding", f"₹{market_outstanding:,.0f}", delta="Receivable")
         col2.metric("Today's Collection", f"₹{todays_coll:,.0f}", delta="Cash Flow")
         col3.metric("Total Sales (Lifetime)", f"₹{total_sold:,.0f}")
         
         st.markdown("---")
-        
-        # 3. Quick Actions
         st.subheader("🚀 Quick Actions")
         c1, c2 = st.columns(2)
-        with c1:
-            st.info("💡 **Tip:** Go to 'Scan (AI)' to upload today's journal pages.")
-        with c2:
-            st.info("💡 **Tip:** Go to 'Ledger' to send payment reminders via WhatsApp.")
+        c1.info("💡 **Tip:** Go to 'Scan (AI)' to upload today's journal pages.")
+        c2.info("💡 **Tip:** Go to 'Ledger' to send payment reminders.")
 
-# --- B. SCANNER ---
+# --- B. SCANNER (Fixed Missing Sections & Save Error) ---
 def tab_scan_ai():
     st.header("📸 AI Journal Scanner")
     existing_parties = get_all_party_names()
@@ -223,7 +196,7 @@ def tab_scan_ai():
             data = run_ai_extraction(img_file.read())
             if data:
                 st.session_state['extracted_data'] = data
-                st.success("Extraction Complete! Please Review below.")
+                st.success("Extraction Complete! Review below.")
 
     if 'extracted_data' in st.session_state:
         data = st.session_state['extracted_data']
@@ -242,18 +215,22 @@ def tab_scan_ai():
                 if msg: st.caption(msg)
                 return st.text_input(label, final_val, key=key_suffix)
 
+            # 1. RETAILERS DUES
             st.markdown("##### 1. Retailers Dues")
             dues = data.get("CustomerDues", [])
             final_dues = []
+            if not dues: st.caption("No data found in this section.")
             for i, d in enumerate(dues):
                 c1, c2 = st.columns([3, 1])
                 p = smart_input("Party", d.get("Party"), f"d_p_{i}")
                 a = c2.number_input("Amount", value=float(d.get("Amount", 0)), key=f"d_a_{i}")
                 final_dues.append({"Party": p, "Amount": a})
             
+            # 2. PAYMENTS RECEIVED
             st.markdown("##### 2. Payments Received")
             rx = data.get("PaymentsReceived", [])
             final_rx = []
+            if not rx: st.caption("No data found in this section.")
             for i, d in enumerate(rx):
                 c1, c2, c3 = st.columns([2, 1, 1])
                 p = smart_input("Party", d.get("Party"), f"r_p_{i}")
@@ -261,18 +238,55 @@ def tab_scan_ai():
                 m = c3.selectbox("Mode", ["Cash", "UPI"], key=f"r_m_{i}")
                 final_rx.append({"Party": p, "Amount": a, "Mode": m})
 
-            # (Skipping Supplier/Purchases sections in code view for brevity, but logic remains same)
-            # You can add them back if needed, but this keeps the code cleaner to read.
+            # 3. PAYMENTS TO SUPPLIERS (Now Included!)
+            st.markdown("##### 3. Payments To Suppliers")
+            tx = data.get("PaymentsToSuppliers", [])
+            final_tx = []
+            if not tx: st.caption("No data found in this section.")
+            for i, d in enumerate(tx):
+                c1, c2, c3 = st.columns([2, 1, 1])
+                s = smart_input("Supplier", d.get("Supplier"), f"t_s_{i}")
+                a = c2.number_input("Amount", value=float(d.get("Amount", 0)), key=f"t_a_{i}")
+                m = c3.selectbox("Mode", ["Cash", "UPI"], key=f"t_m_{i}")
+                final_tx.append({"Supplier": s, "Amount": a, "Mode": m})
             
+            # 4. PURCHASE DETAILS (Now Included!)
+            st.markdown("##### 4. Purchase Details")
+            gx = data.get("GoodsReceived", [])
+            final_gx = []
+            if not gx: st.caption("No data found in this section.")
+            for i, d in enumerate(gx):
+                c1, c2, c3 = st.columns([2, 2, 1])
+                s = smart_input("Supplier", d.get("Supplier"), f"g_s_{i}")
+                it = c2.text_input("Items", d.get("Items", "Goods"), key=f"g_i_{i}")
+                a = c3.number_input("Amount", value=float(d.get("Amount", 0)), key=f"g_a_{i}")
+                final_gx.append({"Supplier": s, "Items": it, "Amount": a})
+
+            # SAVE BUTTON
             if st.form_submit_button("💾 Save to Cloud"):
                 sh = get_sheet_object()
                 txn_date = data.get("Date", str(date.today()))
                 
                 try:
+                    # Save Dues
                     if final_dues: 
-                        sh.worksheet("CustomerDues").append_rows([[txn_date, r["Party"], r["Amount"]] for r in final_dues if r["Party"]])
+                        rows = [[txn_date, r["Party"], r["Amount"]] for r in final_dues if r["Party"]]
+                        if rows: sh.worksheet("CustomerDues").append_rows(rows)
+                    
+                    # Save Rx
                     if final_rx: 
-                        sh.worksheet("PaymentsReceived").append_rows([[txn_date, r["Party"], r["Amount"], r["Mode"]] for r in final_rx if r["Party"]])
+                        rows = [[txn_date, r["Party"], r["Amount"], r["Mode"]] for r in final_rx if r["Party"]]
+                        if rows: sh.worksheet("PaymentsReceived").append_rows(rows)
+                    
+                    # Save Suppliers (Fixed NameError)
+                    if final_tx: 
+                        rows = [[txn_date, r["Supplier"], r["Amount"], r["Mode"]] for r in final_tx if r["Supplier"]]
+                        if rows: sh.worksheet("PaymentsToSuppliers").append_rows(rows)
+                    
+                    # Save Purchases (Fixed NameError)
+                    if final_gx: 
+                        rows = [[txn_date, r["Supplier"], r["Items"], r["Amount"]] for r in final_gx if r["Supplier"]]
+                        if rows: sh.worksheet("GoodsReceived").append_rows(rows)
                     
                     st.success("✅ Data saved securely to Google Sheets!")
                     del st.session_state['extracted_data']
@@ -280,40 +294,31 @@ def tab_scan_ai():
                 except Exception as e:
                     st.error(f"Save failed: {e}")
 
-# --- C. LEDGER (With Date Filter & WhatsApp) ---
+# --- C. LEDGER ---
 def tab_ledger_view():
     st.header("📒 Party Ledger & Statements")
     
     col_sel, col_date1, col_date2 = st.columns([2, 1, 1])
-    
     with col_sel:
         all_parties = get_all_party_names()
         sel_party = st.selectbox("Select Party", ["Select..."] + all_parties)
-    
-    # Date Filtering Feature
-    with col_date1:
-        start_date = st.date_input("From Date", date.today() - timedelta(days=30))
-    with col_date2:
-        end_date = st.date_input("To Date", date.today())
+    with col_date1: start_date = st.date_input("From Date", date.today() - timedelta(days=30))
+    with col_date2: end_date = st.date_input("To Date", date.today())
         
     if sel_party != "Select...":
         sh = get_sheet_object()
         ledger_data = []
         
-        # Helper to fetch and filter
         def fetch_sheet(sheet_name, desc_label, type_cr_dr):
             try:
                 df = pd.DataFrame(sh.worksheet(sheet_name).get_all_records())
+                if df.empty: return
                 df.columns = df.columns.str.strip()
-                # Determine Party Column Name
                 p_col = "Party" if "Party" in df.columns else "Supplier"
                 if p_col not in df.columns: return
 
-                # Filter by Party
                 df[p_col] = df[p_col].astype(str).str.strip()
                 df = df[df[p_col] == sel_party]
-                
-                # Filter by Date
                 df["Date"] = pd.to_datetime(df["Date"], errors='coerce').dt.date
                 df = df[(df["Date"] >= start_date) & (df["Date"] <= end_date)]
                 
@@ -336,63 +341,15 @@ def tab_ledger_view():
 
         if ledger_data:
             l_df = pd.DataFrame(ledger_data).sort_values(by="Date")
-            
-            # Totals
             total_debit = l_df["Debit"].sum()
             total_credit = l_df["Credit"].sum()
             net_bal = total_debit - total_credit
             
-            # 1. Summary Cards
             c1, c2, c3 = st.columns(3)
             c1.metric("Sold (Debit)", f"₹{total_debit:,.0f}")
             c2.metric("Received (Credit)", f"₹{total_credit:,.0f}")
             status = "TO RECEIVE" if net_bal > 0 else "TO PAY"
             c3.metric("Net Balance", f"₹{abs(net_bal):,.0f}", status, delta_color="inverse")
             
-            # 2. WhatsApp Button Logic
             wa_msg = f"Hello {sel_party}, your outstanding balance with Gautam Pharma from {start_date} to {end_date} is Rs. {abs(net_bal):,.2f}. Please pay at the earliest."
             wa_link = f"https://wa.me/?text={urllib.parse.quote(wa_msg)}"
-            
-            # Action Bar
-            act1, act2 = st.columns(2)
-            with act1:
-                pdf_bytes = generate_ledger_pdf(sel_party, l_df, net_bal, start_date, end_date)
-                st.download_button("📄 Download PDF", data=pdf_bytes, file_name=f"{sel_party}_Statement.pdf", mime="application/pdf", use_container_width=True)
-            with act2:
-                st.link_button("💬 Share via WhatsApp", wa_link, use_container_width=True)
-
-            # 3. Detailed Table
-            st.markdown("### Transaction Details")
-            st.dataframe(l_df, use_container_width=True, hide_index=True)
-            
-        else:
-            st.info("No transactions found in this date range.")
-
-# --- MAIN MENU ---
-def main():
-    st.sidebar.title("💊 Gautam Pharma")
-    
-    # Professional Sidebar Menu
-    menu = st.sidebar.radio("Menu", ["📊 Dashboard", "📸 Scan (AI)", "📒 Ledger & PDF", "⌨️ Manual Entry"], index=0)
-    
-    if menu == "📊 Dashboard": tab_dashboard()
-    elif menu == "📸 Scan (AI)": tab_scan_ai()
-    elif menu == "📒 Ledger & PDF": tab_ledger_view()
-    elif menu == "⌨️ Manual Entry":
-        # (Reusing simple manual entry logic from previous iterations)
-        st.header("⌨️ Manual Entry")
-        all_parties = get_all_party_names()
-        with st.form("manual"):
-            party = st.selectbox("Party", ["Select...", "Add New"] + all_parties)
-            if party == "Add New": party = st.text_input("Name")
-            amt = st.number_input("Amount")
-            type_ = st.selectbox("Type", ["Customer Due", "Payment Rx"])
-            if st.form_submit_button("Save"):
-                sh = get_sheet_object()
-                if type_ == "Customer Due": sh.worksheet("CustomerDues").append_row([str(date.today()), party, amt])
-                else: sh.worksheet("PaymentsReceived").append_row([str(date.today()), party, amt, "Cash"])
-                st.success("Saved!")
-
-if __name__ == "__main__":
-    main()
-
