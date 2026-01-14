@@ -30,7 +30,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 1. ROBUST GOOGLE SHEETS CONNECTION ---
+# --- 1. OPTIMIZED GOOGLE SHEETS CONNECTION (The Fix) ---
 @st.cache_resource
 def get_gsheet_client():
     try:
@@ -47,16 +47,26 @@ def get_gsheet_client():
         st.error(f"❌ Connection Error: {e}")
         return None
 
+@st.cache_resource
 def get_sheet_object():
+    """Opens the sheet ONCE and remembers it to avoid API Rate Limits."""
     client = get_gsheet_client()
     if client:
-        return client.open("Gautam_Pharma_Ledger")
+        try:
+            return client.open("Gautam_Pharma_Ledger")
+        except gspread.exceptions.SpreadsheetNotFound:
+            st.error("❌ Critical Error: Google Sheet 'Gautam_Pharma_Ledger' not found. Check spelling.")
+            return None
+        except Exception as e:
+            st.error(f"❌ Google API Error: {e}")
+            return None
     return None
 
 def get_all_party_names():
     names = set()
     try:
         sh = get_sheet_object()
+        if not sh: return []
         # Combine names from all sheets
         try: names.update(sh.worksheet("CustomerDues").col_values(2)[1:]) 
         except: pass
@@ -116,7 +126,6 @@ def generate_ledger_pdf(party_name, dataframe, total_due, start_d, end_d):
     pdf.cell(190, 10, f"Period: {start_d} to {end_d}", ln=True, align='L')
     pdf.ln(5)
     
-    # Table Header
     pdf.set_fill_color(240, 240, 240)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(30, 10, "Date", 1, 0, 'C', True)
@@ -124,7 +133,6 @@ def generate_ledger_pdf(party_name, dataframe, total_due, start_d, end_d):
     pdf.cell(30, 10, "Debit", 1, 0, 'C', True)
     pdf.cell(30, 10, "Credit", 1, 1, 'C', True)
     
-    # Table Rows
     pdf.set_font("Arial", '', 10)
     for _, row in dataframe.iterrows():
         pdf.cell(30, 10, str(row['Date']), 1)
@@ -142,23 +150,24 @@ def generate_ledger_pdf(party_name, dataframe, total_due, start_d, end_d):
 
 # --- 4. APP MODULES ---
 
-# --- A. DASHBOARD ---
+# --- A. DASHBOARD (Fixed & Cached) ---
 def tab_dashboard():
     st.markdown("## 📊 Executive Dashboard")
     st.markdown("---")
     
     if st.button("🔄 Refresh Data"):
+        st.cache_resource.clear() # Clears cache to fetch fresh data
         st.rerun()
 
     with st.spinner("Crunching the numbers..."):
         sh = get_sheet_object()
+        if not sh: return
         
         def get_total(sheet_name):
             try:
                 data = sh.worksheet(sheet_name).get_all_records()
                 df = pd.DataFrame(data)
                 if df.empty or "Amount" not in df.columns: return 0.0
-                # Remove commas, currency symbols, and convert to float
                 clean_vals = df["Amount"].astype(str).str.replace(",", "").str.replace("₹", "").str.replace("Rs", "")
                 return pd.to_numeric(clean_vals, errors='coerce').sum()
             except: return 0.0
@@ -191,7 +200,7 @@ def tab_dashboard():
         c1.info("💡 **Tip:** Go to 'Scan (AI)' to upload today's journal pages.")
         c2.info("💡 **Tip:** Go to 'Ledger' to send payment reminders.")
 
-# --- B. SCANNER ---
+# --- B. SCANNER (Fixed) ---
 def tab_scan_ai():
     st.header("📸 AI Journal Scanner")
     existing_parties = get_all_party_names()
@@ -222,22 +231,22 @@ def tab_scan_ai():
                 if msg: st.caption(msg)
                 return st.text_input(label, final_val, key=key_suffix)
 
-            # 1. RETAILERS DUES
+            # RETAILERS DUES
             st.markdown("##### 1. Retailers Dues")
             dues = data.get("CustomerDues", [])
             final_dues = []
-            if not dues: st.caption("No data found in this section.")
+            if not dues: st.caption("No data found.")
             for i, d in enumerate(dues):
                 c1, c2 = st.columns([3, 1])
                 p = smart_input("Party", d.get("Party"), f"d_p_{i}")
                 a = c2.number_input("Amount", value=float(d.get("Amount", 0)), key=f"d_a_{i}")
                 final_dues.append({"Party": p, "Amount": a})
             
-            # 2. PAYMENTS RECEIVED
+            # PAYMENTS RECEIVED
             st.markdown("##### 2. Payments Received")
             rx = data.get("PaymentsReceived", [])
             final_rx = []
-            if not rx: st.caption("No data found in this section.")
+            if not rx: st.caption("No data found.")
             for i, d in enumerate(rx):
                 c1, c2, c3 = st.columns([2, 1, 1])
                 p = smart_input("Party", d.get("Party"), f"r_p_{i}")
@@ -245,11 +254,11 @@ def tab_scan_ai():
                 m = c3.selectbox("Mode", ["Cash", "UPI"], key=f"r_m_{i}")
                 final_rx.append({"Party": p, "Amount": a, "Mode": m})
 
-            # 3. PAYMENTS TO SUPPLIERS
+            # PAYMENTS TO SUPPLIERS
             st.markdown("##### 3. Payments To Suppliers")
             tx = data.get("PaymentsToSuppliers", [])
             final_tx = []
-            if not tx: st.caption("No data found in this section.")
+            if not tx: st.caption("No data found.")
             for i, d in enumerate(tx):
                 c1, c2, c3 = st.columns([2, 1, 1])
                 s = smart_input("Supplier", d.get("Supplier"), f"t_s_{i}")
@@ -257,11 +266,11 @@ def tab_scan_ai():
                 m = c3.selectbox("Mode", ["Cash", "UPI"], key=f"t_m_{i}")
                 final_tx.append({"Supplier": s, "Amount": a, "Mode": m})
             
-            # 4. PURCHASE DETAILS
+            # PURCHASE DETAILS
             st.markdown("##### 4. Purchase Details")
             gx = data.get("GoodsReceived", [])
             final_gx = []
-            if not gx: st.caption("No data found in this section.")
+            if not gx: st.caption("No data found.")
             for i, d in enumerate(gx):
                 c1, c2, c3 = st.columns([2, 2, 1])
                 s = smart_input("Supplier", d.get("Supplier"), f"g_s_{i}")
@@ -272,6 +281,8 @@ def tab_scan_ai():
             # SAVE BUTTON
             if st.form_submit_button("💾 Save to Cloud"):
                 sh = get_sheet_object()
+                if not sh: st.stop() # Stop if connection failed
+                
                 txn_date = data.get("Date", str(date.today()))
                 
                 try:
@@ -295,15 +306,12 @@ def tab_scan_ai():
                         rows = [[txn_date, r["Supplier"], r["Items"], float(r["Amount"])] for r in final_gx if r["Supplier"]]
                         if rows: sh.worksheet("GoodsReceived").append_rows(rows)
                     
-                    # SUCCESS MESSAGE WITH DELAY
-                    st.success("✅ SUCCESS! Data saved to Google Sheets.")
-                    st.write("Refreshing app in 3 seconds...")
-                    time.sleep(3) # Wait so you can read the message
+                    st.success("✅ SAVED SUCCESSFULLY! App will refresh momentarily.")
+                    time.sleep(2)
                     del st.session_state['extracted_data']
                     st.rerun()
                 except Exception as e:
-                    st.error(f"❌ Save Failed: {e}")
-                    # We do NOT rerun here so you can read the error
+                    st.error(f"❌ Save Failed (Wait 1 min & try again): {e}")
 
 # --- C. LEDGER ---
 def tab_ledger_view():
@@ -318,6 +326,8 @@ def tab_ledger_view():
         
     if sel_party != "Select...":
         sh = get_sheet_object()
+        if not sh: return
+
         ledger_data = []
         
         def fetch_sheet(sheet_name, desc_label, type_cr_dr):
@@ -398,6 +408,8 @@ def main():
             type_ = st.selectbox("Type", ["Customer Due", "Payment Rx", "Supplier Payment", "Purchase"])
             if st.form_submit_button("Save"):
                 sh = get_sheet_object()
+                if not sh: st.stop()
+                
                 if type_ == "Customer Due": sh.worksheet("CustomerDues").append_row([str(date.today()), party, amt])
                 elif type_ == "Payment Rx": sh.worksheet("PaymentsReceived").append_row([str(date.today()), party, amt, "Cash"])
                 elif type_ == "Supplier Payment": sh.worksheet("PaymentsToSuppliers").append_row([str(date.today()), party, amt, "Cash"])
