@@ -38,37 +38,25 @@ def get_gsheet_client():
         return None
 
 def check_and_fix_headers():
-    """Checks if headers exist. If not, adds them to Row 1."""
     client = get_gsheet_client()
     if not client: return
-    
     try:
         sh = client.open("Gautam_Pharma_Ledger")
-        
-        # Define correct headers for each sheet
         required_headers = {
             "CustomerDues": ["Date", "Party", "Amount"],
             "PaymentsReceived": ["Date", "Party", "Amount", "Mode"],
             "PaymentsToSuppliers": ["Date", "Supplier", "Amount", "Mode"],
             "GoodsReceived": ["Date", "Supplier", "Items", "Amount"]
         }
-        
         for sheet_name, headers in required_headers.items():
             try:
                 ws = sh.worksheet(sheet_name)
-                existing_headers = ws.row_values(1)
-                
-                # If row 1 is empty OR doesn't match the expected "Date" column
-                if not existing_headers or existing_headers[0] != "Date":
-                    st.toast(f"🔧 Fixing headers for {sheet_name}...", icon="🛠️")
-                    # Insert headers at row 1
+                existing = ws.row_values(1)
+                if not existing or existing[0] != "Date":
                     ws.insert_row(headers, 1)
-            except:
-                pass # Sheet might not exist, skip
-    except:
-        pass
+            except: pass
+    except: pass
 
-# Run repair once on load
 check_and_fix_headers()
 
 @st.cache_resource
@@ -84,7 +72,6 @@ def fetch_sheet_data(sheet_name):
     try:
         sh = get_sheet_object()
         if not sh: return pd.DataFrame()
-        # get_all_records headers=1 means Row 1 is the header
         data = sh.worksheet(sheet_name).get_all_records()
         return pd.DataFrame(data)
     except: return pd.DataFrame()
@@ -267,7 +254,7 @@ def tab_ledger_view():
     col_sel, col_d1, col_d2 = st.columns([2, 1, 1])
     all_parties = get_all_party_names()
     sel_party = col_sel.selectbox("Select Party", ["Select..."] + all_parties)
-    start_date = col_d1.date_input("From", date.today() - timedelta(days=365)) # DEFAULT TO 1 YEAR BACK
+    start_date = col_d1.date_input("From", date.today() - timedelta(days=365))
     end_date = col_d2.date_input("To", date.today())
         
     if sel_party != "Select...":
@@ -303,7 +290,6 @@ def tab_ledger_view():
             c1.metric("Sold", f"₹{l_df['Debit'].sum():,.0f}")
             c2.metric("Received", f"₹{l_df['Credit'].sum():,.0f}")
             c3.metric("Balance", f"₹{abs(bal):,.0f}", "Receivable" if bal>0 else "Payable")
-            
             wa_link = f"https://wa.me/?text={urllib.parse.quote(f'Hello {sel_party}, Balance: {bal}')}"
             st.link_button("💬 WhatsApp", wa_link)
             st.dataframe(l_df, use_container_width=True)
@@ -314,20 +300,44 @@ def tab_manual_entry():
     st.header("⌨️ Manual Entry")
     all_parties = get_all_party_names()
     with st.form("manual"):
-        party = st.selectbox("Party", ["Select...", "Add New"] + all_parties)
-        if party == "Add New": party = st.text_input("Name")
-        amt = st.number_input("Amount")
-        type_ = st.selectbox("Type", ["Customer Due", "Payment Rx", "Supplier Payment", "Purchase"])
+        # Top Row: Date and Type
+        c1, c2 = st.columns(2)
+        date_val = c1.date_input("Date", date.today())
+        entry_type = c2.selectbox("Type", ["Customer Due", "Payment Rx", "Supplier Payment", "Purchase"])
+        
+        # Middle Row: Party and Amount
+        c3, c4 = st.columns(2)
+        party_in = c3.selectbox("Party / Supplier", ["Select...", "➕ Add New"] + all_parties)
+        if party_in == "➕ Add New": party = c3.text_input("Enter New Name")
+        else: party = party_in
+        amt = c4.number_input("Amount", min_value=0.0)
+
+        # Dynamic Row: Mode or Description
+        mode = "Cash"
+        desc = "Goods"
+        if entry_type in ["Payment Rx", "Supplier Payment"]:
+            mode = st.selectbox("Mode", ["Cash", "UPI", "Cheque"])
+        elif entry_type == "Purchase":
+            desc = st.text_input("Item Description", "Goods")
+
         if st.form_submit_button("Save"):
+            if not party or party == "Select..." or amt == 0:
+                st.warning("Please fill Party Name and Amount.")
+                st.stop()
+                
             sh = get_sheet_object()
             if not sh: st.stop()
             try:
-                row = []
-                if type_ == "Customer Due": sh.worksheet("CustomerDues").append_row([str(date.today()), party, amt])
-                elif type_ == "Payment Rx": sh.worksheet("PaymentsReceived").append_row([str(date.today()), party, amt, "Cash"])
-                elif type_ == "Supplier Payment": sh.worksheet("PaymentsToSuppliers").append_row([str(date.today()), party, amt, "Cash"])
-                elif type_ == "Purchase": sh.worksheet("GoodsReceived").append_row([str(date.today()), party, "Goods", amt])
-                st.success("Saved!")
+                if entry_type == "Customer Due": 
+                    sh.worksheet("CustomerDues").append_row([str(date_val), party, amt])
+                elif entry_type == "Payment Rx": 
+                    sh.worksheet("PaymentsReceived").append_row([str(date_val), party, amt, mode])
+                elif entry_type == "Supplier Payment": 
+                    sh.worksheet("PaymentsToSuppliers").append_row([str(date_val), party, amt, mode])
+                elif entry_type == "Purchase": 
+                    sh.worksheet("GoodsReceived").append_row([str(date_val), party, desc, amt])
+                
+                st.success(f"Saved ₹{amt} for {party}!")
                 st.cache_data.clear()
             except Exception as e: st.error(f"Error: {e}")
 
