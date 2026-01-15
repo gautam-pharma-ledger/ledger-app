@@ -14,6 +14,7 @@ import time
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Gautam Pharma Ledger", layout="wide", page_icon="💊")
 
+# Custom CSS for "Chips" (Date Buttons) and Cards
 st.markdown("""
     <style>
     .metric-card {
@@ -23,6 +24,17 @@ st.markdown("""
         box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
     }
     .stButton>button { width: 100%; border-radius: 8px; height: 3em; }
+    /* Style for date filter buttons to look like chips */
+    div[data-testid="column"] .stButton>button {
+        background-color: #e0e0ef;
+        color: black;
+        border: none;
+        height: 2.5em;
+    }
+    div[data-testid="column"] .stButton>button:hover {
+        background-color: #d0d0df;
+        border: 1px solid #999;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -38,6 +50,7 @@ def get_gsheet_client():
         return None
 
 def check_and_fix_headers():
+    """Checks if headers exist. If not, adds them to Row 1."""
     client = get_gsheet_client()
     if not client: return
     try:
@@ -52,11 +65,13 @@ def check_and_fix_headers():
             try:
                 ws = sh.worksheet(sheet_name)
                 existing = ws.row_values(1)
+                # If row 1 is empty OR doesn't match the expected "Date" column
                 if not existing or existing[0] != "Date":
                     ws.insert_row(headers, 1)
             except: pass
     except: pass
 
+# Run repair once on load
 check_and_fix_headers()
 
 @st.cache_resource
@@ -107,36 +122,74 @@ def run_ai_extraction(image_bytes):
         st.error(f"AI Error: {e}")
         return None
 
-# --- 3. PDF GENERATOR ---
+# --- 3. PROFESSIONAL PDF GENERATOR ---
 def generate_ledger_pdf(party_name, dataframe, total_due, start_d, end_d):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(190, 10, "Gautam Pharma - Statement of Account", ln=True, align='C')
-    pdf.set_font("Arial", '', 12)
-    pdf.cell(190, 10, f"Party: {party_name}", ln=True, align='L')
-    pdf.cell(190, 10, f"Period: {start_d} to {end_d}", ln=True, align='L')
-    pdf.ln(5)
-    pdf.set_fill_color(240, 240, 240)
-    pdf.set_font("Arial", 'B', 10)
-    pdf.cell(30, 10, "Date", 1, 0, 'C', True)
-    pdf.cell(80, 10, "Description", 1, 0, 'C', True)
-    pdf.cell(30, 10, "Debit", 1, 0, 'C', True)
-    pdf.cell(30, 10, "Credit", 1, 1, 'C', True)
-    pdf.set_font("Arial", '', 10)
-    for _, row in dataframe.iterrows():
-        pdf.cell(30, 10, str(row['Date']), 1)
-        pdf.cell(80, 10, str(row['Description'])[:35], 1)
-        pdf.cell(30, 10, str(row['Debit']), 1)
-        pdf.cell(30, 10, str(row['Credit']), 1)
-        pdf.ln()
-    pdf.ln(5)
+    
+    # Title
+    pdf.set_font("Arial", 'B', 18)
+    pdf.cell(190, 10, "Gautam Pharma", ln=True, align='C')
+    pdf.set_font("Arial", 'I', 10)
+    pdf.cell(190, 6, "Pharmaceutical Distributors", ln=True, align='C')
+    pdf.line(10, 25, 200, 25)
+    pdf.ln(10)
+    
+    # Party Info
     pdf.set_font("Arial", 'B', 12)
-    status = "RECEIVABLE (They Owe You)" if total_due > 0 else "PAYABLE (You Owe Them)"
-    pdf.cell(190, 10, f"Net Balance: Rs. {total_due:,.2f}  [{status}]", ln=True)
+    pdf.cell(100, 8, f"To: {party_name}", ln=0)
+    pdf.cell(90, 8, f"Statement Date: {date.today()}", ln=1, align='R')
+    
+    pdf.set_font("Arial", '', 10)
+    pdf.cell(100, 6, f"Period: {start_d} to {end_d}", ln=1)
+    pdf.ln(5)
+    
+    # Header
+    pdf.set_fill_color(230, 230, 230)
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(25, 8, "Date", 1, 0, 'C', True)
+    pdf.cell(85, 8, "Particulars", 1, 0, 'C', True)
+    pdf.cell(25, 8, "Debit", 1, 0, 'C', True)
+    pdf.cell(25, 8, "Credit", 1, 0, 'C', True)
+    pdf.cell(30, 8, "Balance", 1, 1, 'C', True)
+    
+    # Rows
+    pdf.set_font("Arial", '', 9)
+    running_bal = 0.0
+    
+    for _, row in dataframe.iterrows():
+        dr = float(row['Debit'])
+        cr = float(row['Credit'])
+        running_bal += (dr - cr)
+        
+        pdf.cell(25, 7, str(row['Date']), 1)
+        pdf.cell(85, 7, str(row['Description'])[:45], 1)
+        pdf.cell(25, 7, f"{dr:,.2f}" if dr > 0 else "-", 1, 0, 'R')
+        pdf.cell(25, 7, f"{cr:,.2f}" if cr > 0 else "-", 1, 0, 'R')
+        pdf.cell(30, 7, f"{running_bal:,.2f}", 1, 1, 'R')
+        
+    pdf.ln(5)
+    
+    # Final Total
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(110, 10, "", 0)
+    pdf.cell(40, 10, "Net Closing Balance:", 0, 0, 'R')
+    
+    status = " (Receivable)" if total_due > 0 else " (Payable)"
+    color = (200, 0, 0) if total_due > 0 else (0, 150, 0) # Red if they owe you, Green if you owe them
+    pdf.set_text_color(*color)
+    pdf.cell(40, 10, f"Rs. {abs(total_due):,.2f} {status}", 0, 1, 'R')
+    pdf.set_text_color(0, 0, 0)
+    
+    # Footer
+    pdf.ln(20)
+    pdf.set_font("Arial", 'I', 8)
+    pdf.cell(0, 5, "This is a computer-generated statement.", align='C')
+    
     return pdf.output(dest='S').encode('latin-1')
 
 # --- 4. TABS ---
+
 def tab_dashboard():
     st.markdown("## 📊 Executive Dashboard")
     st.markdown("---")
@@ -251,12 +304,52 @@ def tab_scan_ai():
 
 def tab_ledger_view():
     st.header("📒 Party Ledger")
-    col_sel, col_d1, col_d2 = st.columns([2, 1, 1])
+    
+    # Party Selection
     all_parties = get_all_party_names()
-    sel_party = col_sel.selectbox("Select Party", ["Select..."] + all_parties)
-    start_date = col_d1.date_input("From", date.today() - timedelta(days=365))
-    end_date = col_d2.date_input("To", date.today())
+    sel_party = st.selectbox("Select Party", ["Select..."] + all_parties)
+
+    # Date Filter Session State
+    if 'ledger_start_date' not in st.session_state:
+        st.session_state['ledger_start_date'] = date.today().replace(day=1)
+    if 'ledger_end_date' not in st.session_state:
+        st.session_state['ledger_end_date'] = date.today()
+
+    # --- QUICK DATE BUTTONS ---
+    st.write("📅 **Quick Filters:**")
+    b1, b2, b3, b4 = st.columns(4)
+    
+    if b1.button("This Month"):
+        st.session_state['ledger_start_date'] = date.today().replace(day=1)
+        st.session_state['ledger_end_date'] = date.today()
+        st.rerun()
         
+    if b2.button("Last Month"):
+        first = (date.today().replace(day=1) - timedelta(days=1)).replace(day=1)
+        last = date.today().replace(day=1) - timedelta(days=1)
+        st.session_state['ledger_start_date'] = first
+        st.session_state['ledger_end_date'] = last
+        st.rerun()
+
+    if b3.button("Last 6 Months"):
+        st.session_state['ledger_start_date'] = date.today() - timedelta(days=180)
+        st.session_state['ledger_end_date'] = date.today()
+        st.rerun()
+
+    if b4.button("Financial Year"):
+        today = date.today()
+        # If before April, FY starts prev year April. If after April, FY starts this year April.
+        if today.month < 4: start_year = today.year - 1
+        else: start_year = today.year
+        st.session_state['ledger_start_date'] = date(start_year, 4, 1)
+        st.session_state['ledger_end_date'] = today
+        st.rerun()
+
+    # Manual Date Pickers (Connected to Session State)
+    c1, c2 = st.columns(2)
+    start_date = c1.date_input("From", st.session_state['ledger_start_date'])
+    end_date = c2.date_input("To", st.session_state['ledger_end_date'])
+
     if sel_party != "Select...":
         ledger_data = []
         def process(sheet, desc, type_cd):
@@ -285,34 +378,58 @@ def tab_ledger_view():
 
         if ledger_data:
             l_df = pd.DataFrame(ledger_data).sort_values(by="Date")
-            bal = l_df["Debit"].sum() - l_df["Credit"].sum()
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Sold", f"₹{l_df['Debit'].sum():,.0f}")
-            c2.metric("Received", f"₹{l_df['Credit'].sum():,.0f}")
-            c3.metric("Balance", f"₹{abs(bal):,.0f}", "Receivable" if bal>0 else "Payable")
-            wa_link = f"https://wa.me/?text={urllib.parse.quote(f'Hello {sel_party}, Balance: {bal}')}"
-            st.link_button("💬 WhatsApp", wa_link)
+            
+            # Running Balance Calculation
+            l_df["Net Change"] = l_df["Debit"] - l_df["Credit"]
+            bal = l_df["Net Change"].sum()
+
+            # Display Metrics
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total Debit (Sold)", f"₹{l_df['Debit'].sum():,.2f}")
+            m2.metric("Total Credit (Recvd)", f"₹{l_df['Credit'].sum():,.2f}")
+            m3.metric("Net Balance", f"₹{abs(bal):,.2f}", "Receivable" if bal>0 else "Payable")
+            
+            st.divider()
+
+            # ACTION BUTTONS
+            a1, a2 = st.columns(2)
+            
+            # 1. PDF Download
+            with a1:
+                pdf_bytes = generate_ledger_pdf(sel_party, l_df, bal, start_date, end_date)
+                st.download_button(
+                    label="📄 Download PDF Ledger",
+                    data=pdf_bytes,
+                    file_name=f"{sel_party}_Ledger_{start_date}_{end_date}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            
+            # 2. WhatsApp Button
+            with a2:
+                wa_msg = f"*Gautam Pharma Statement*\n\nHello {sel_party},\n\nYour outstanding balance from {start_date} to {end_date} is *Rs. {abs(bal):,.2f}*.\n\nPlease find the detailed ledger attached (if sent separately) or pay at your earliest convenience."
+                wa_link = f"https://wa.me/?text={urllib.parse.quote(wa_msg)}"
+                st.link_button("💬 Share Update on WhatsApp", wa_link, use_container_width=True)
+                st.caption("ℹ️ Tip: Download the PDF first, then attach it in WhatsApp.")
+
             st.dataframe(l_df, use_container_width=True)
         else:
-            st.info("No transactions found.")
+            st.info("No transactions found for this period.")
 
 def tab_manual_entry():
     st.header("⌨️ Manual Entry")
     all_parties = get_all_party_names()
     with st.form("manual"):
-        # Top Row: Date and Type
         c1, c2 = st.columns(2)
         date_val = c1.date_input("Date", date.today())
         entry_type = c2.selectbox("Type", ["Customer Due", "Payment Rx", "Supplier Payment", "Purchase"])
         
-        # Middle Row: Party and Amount
         c3, c4 = st.columns(2)
         party_in = c3.selectbox("Party / Supplier", ["Select...", "➕ Add New"] + all_parties)
         if party_in == "➕ Add New": party = c3.text_input("Enter New Name")
         else: party = party_in
         amt = c4.number_input("Amount", min_value=0.0)
 
-        # Dynamic Row: Mode or Description
         mode = "Cash"
         desc = "Goods"
         if entry_type in ["Payment Rx", "Supplier Payment"]:
