@@ -91,18 +91,15 @@ def clean_amount(val):
     try: return float(str(val).replace(",", "").replace("₹", "").replace("Rs", "").strip())
     except: return 0.0
 
-# --- 2. ROBUST AI EXTRACTION (Fixes "Extra Data" Error) ---
+# --- 2. ROBUST AI EXTRACTION ---
 def extract_json_from_text(text):
-    """Finds the first { and last } to ignore extra AI chatter."""
     try:
         start = text.find('{')
         end = text.rfind('}') + 1
         if start != -1 and end != -1:
-            json_str = text[start:end]
-            return json.loads(json_str)
+            return json.loads(text[start:end])
         return None
-    except:
-        return None
+    except: return None
 
 def extract_single_party_ledger(image_bytes):
     try:
@@ -110,13 +107,17 @@ def extract_single_party_ledger(image_bytes):
         client = OpenAI(api_key=api_key)
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
         
+        # UPDATED PROMPT TO FIND OPENING BALANCE
         prompt = """
         Analyze this image of a SINGLE PARTY'S ledger account.
-        1. Find the PARTY NAME at the top.
-        2. Extract table with columns: Date, Particulars, Debit, Credit.
+        1. Find the PARTY NAME.
+        2. Look for 'Opening Balance', 'B/F', 'Previous Dues', 'Back Dues' usually at the top or bottom. Extract this amount separately.
+        3. Extract the transaction table with columns: Date, Particulars, Debit, Credit.
+        
         Return JSON:
         {
             "PartyName": "Name Found",
+            "OpeningBalance": 0.0,
             "Transactions": [
                 {"Date": "YYYY-MM-DD", "Particulars": "Desc", "Debit": 0.0, "Credit": 0.0}
             ]
@@ -127,8 +128,7 @@ def extract_single_party_ledger(image_bytes):
             messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}]}],
             max_tokens=1500
         )
-        content = response.choices[0].message.content
-        return extract_json_from_text(content)
+        return extract_json_from_text(response.choices[0].message.content)
     except Exception as e:
         st.error(f"AI Error: {e}")
         return None
@@ -224,19 +224,35 @@ def screen_digitize_ledger():
     img = st.file_uploader("Upload Image", type=['jpg', 'png', 'jpeg'])
     
     if img and st.button("🚀 Process Image"):
-        with st.spinner("AI is reading the table..."):
+        with st.spinner("AI is finding Name, Opening Balance & Transactions..."):
             data = extract_single_party_ledger(img.read())
             if data:
                 st.session_state['hist_data'] = data
                 st.rerun()
             else:
-                st.error("Could not read image. Try cropping to just the table.")
+                st.error("Could not read image. Try cropping it.")
                 
     if 'hist_data' in st.session_state:
         data = st.session_state['hist_data']
         with st.form("save_hist"):
-            party_name = st.text_input("Party Name", data.get("PartyName", ""))
+            # 1. SMART NAME CHECK
+            scanned_name = data.get("PartyName", "")
+            existing_parties = get_all_party_names()
+            matches = difflib.get_close_matches(scanned_name, existing_parties, n=1, cutoff=0.6)
             
+            final_party_name = scanned_name
+            if matches:
+                st.warning(f"⚠️ Found existing party: **{matches[0]}**")
+                choice = st.radio("Which name to use?", [f"Use Existing: {matches[0]}", f"Keep Scanned: {scanned_name}"])
+                if "Use Existing" in choice:
+                    final_party_name = matches[0]
+            
+            st.text_input("Final Party Name", value=final_party_name, disabled=True)
+            
+            # 2. OPENING BALANCE (NEW FEATURE)
+            op_bal = st.number_input("Opening Balance / Back Dues", value=float(data.get("OpeningBalance", 0.0)))
+            
+            # 3. TRANSACTIONS
             raw_txns = data.get("Transactions", [])
             df_txns = pd.DataFrame(raw_txns)
             for col in ["Date", "Particulars", "Debit", "Credit"]:
@@ -249,13 +265,17 @@ def screen_digitize_ledger():
                 sales_rows = []
                 pymt_rows = []
                 
+                # Add Opening Balance as a Sale entry
+                if op_bal > 0:
+                    sales_rows.append([str(date.today()), final_party_name, op_bal])
+                
                 for _, row in edited_df.iterrows():
                     d_date = row.get("Date", str(date.today()))
                     dr = clean_amount(row.get("Debit", 0))
                     cr = clean_amount(row.get("Credit", 0))
                     
-                    if dr > 0: sales_rows.append([d_date, party_name, dr])
-                    if cr > 0: pymt_rows.append([d_date, party_name, cr, "Old Ledger"])
+                    if dr > 0: sales_rows.append([d_date, final_party_name, dr])
+                    if cr > 0: pymt_rows.append([d_date, final_party_name, cr, "Old Ledger"])
 
                 if sales_rows: sh.worksheet("CustomerDues").append_rows(sales_rows)
                 if pymt_rows: sh.worksheet("PaymentsReceived").append_rows(pymt_rows)
@@ -272,7 +292,6 @@ def screen_manual():
     with st.form("manual_form"):
         c1, c2 = st.columns([1, 1])
         entry_date = c1.date_input("Date", date.today())
-        # RESTORED ALL 4 TYPES
         entry_type = c2.selectbox("Type", ["Sale (Bill)", "Payment Received", "Supplier Payment", "Purchase (Goods)"])
         
         c3, c4 = st.columns([2, 1])
@@ -282,7 +301,6 @@ def screen_manual():
         
         amount = c4.number_input("Amount", min_value=0.0)
 
-        # Dynamic fields based on type
         extra_field = ""
         if entry_type in ["Payment Received", "Supplier Payment"]:
             extra_field = st.selectbox("Mode", ["Cash", "UPI", "Cheque"])
@@ -344,7 +362,6 @@ def screen_ledger():
         dues = fetch_sheet_data("CustomerDues")
         pymt = fetch_sheet_data("PaymentsReceived")
         
-        # Filter Dues
         d_df = dues[dues['Party'].astype(str) == sel_party].copy()
         if not d_df.empty:
             d_df['Type'] = 'Sale'
@@ -352,7 +369,6 @@ def screen_ledger():
             d_df['Credit'] = 0
             d_df['Description'] = 'Bill/Due'
         
-        # Filter Pymt
         p_df = pymt[pymt['Party'].astype(str) == sel_party].copy()
         if not p_df.empty:
             p_df['Type'] = 'Payment'
@@ -360,28 +376,22 @@ def screen_ledger():
             p_df['Credit'] = p_df['Amount'].apply(clean_amount)
             p_df['Description'] = 'Payment Rx'
         
-        # Combine
         full_df = pd.concat([d_df, p_df])
         if not full_df.empty:
             full_df['Date'] = pd.to_datetime(full_df['Date'], errors='coerce').dt.date
             full_df = full_df.sort_values(by='Date')
             full_df = full_df[(full_df['Date'] >= s_date) & (full_df['Date'] <= e_date)]
             
-            # Balance
             bal = full_df['Debit'].sum() - full_df['Credit'].sum()
             
             st.dataframe(full_df[['Date', 'Description', 'Debit', 'Credit']], use_container_width=True)
             st.metric("Net Balance", f"₹{abs(bal):,.2f}", "Receivable" if bal>0 else "Payable")
             
-            # Action Buttons
             col_pdf, col_wa = st.columns(2)
-            
             with col_pdf:
                 pdf_bytes = generate_pdf(sel_party, full_df, s_date, e_date)
                 st.download_button("📄 Download PDF", pdf_bytes, file_name="Statement.pdf", mime="application/pdf", use_container_width=True)
-            
             with col_wa:
-                # RESTORED WHATSAPP FEATURE
                 wa_msg = f"*Gautam Pharma Statement*\nHello {sel_party},\nYour outstanding balance from {s_date} to {e_date} is *Rs. {abs(bal):,.2f}*."
                 wa_link = f"https://wa.me/?text={urllib.parse.quote(wa_msg)}"
                 st.link_button("💬 Share on WhatsApp", wa_link, use_container_width=True)
@@ -409,7 +419,6 @@ def screen_scan_daily():
             st.json(data)
             if st.form_submit_button("Save to Sheets"):
                 sh = get_sheet_object()
-                # Simplified save logic (can be expanded if needed)
                 txn_date = data.get("Date", str(date.today()))
                 
                 # Example: Saving Dues
