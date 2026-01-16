@@ -47,10 +47,8 @@ st.markdown("""
         background-color: #fff5f5;
         transform: translateY(-2px);
     }
-    /* Smaller buttons for internal tools */
-    .small-btn > button {
-        height: 3em !important;
-    }
+    /* Small buttons for internal tools */
+    .small-btn > button { height: 3em !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -82,12 +80,16 @@ def fetch_sheet_data(sheet_name):
 
 def get_all_party_names():
     names = set()
-    master = fetch_sheet_data("Party_Master")
-    if not master.empty: names.update(master["Name"].astype(str).unique())
+    # 1. Get from Transactions
     for sheet in ["CustomerDues", "PaymentsReceived"]:
         df = fetch_sheet_data(sheet)
         if not df.empty and "Party" in df.columns:
             names.update(df["Party"].astype(str).unique())
+            
+    # 2. Get from Master (in case some have no transactions yet)
+    master = fetch_sheet_data("Party_Master")
+    if not master.empty: names.update(master["Name"].astype(str).unique())
+    
     return sorted([n.strip() for n in list(names) if n.strip()])
 
 def clean_amount(val):
@@ -95,9 +97,13 @@ def clean_amount(val):
     except: return 0.0
 
 def parse_date(date_str):
-    """Smart date parser to handle various formats"""
     try: return pd.to_datetime(date_str).date()
     except: return None
+
+def smart_match_party(scanned_name):
+    parties = get_all_party_names()
+    matches = difflib.get_close_matches(scanned_name, parties, n=1, cutoff=0.6)
+    return matches[0] if matches else scanned_name
 
 # --- 2. AI HELPERS ---
 def extract_json_from_text(text):
@@ -127,8 +133,12 @@ def run_daily_scan_extraction(image_bytes):
         api_key = st.secrets["OPENAI_API_KEY"]
         client = OpenAI(api_key=api_key)
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
-        prompt = """Analyze daily journal. Map to: CustomerDues, PaymentsReceived, GoodsReceived, PaymentsToSuppliers.
-        Return JSON: { "Date": "YYYY-MM-DD", "CustomerDues": [{"Party": "Name", "Amount": 0}], "PaymentsReceived": [{"Party": "Name", "Amount": 0, "Mode": "Cash"}], "GoodsReceived": [{"Supplier": "Name", "Amount": 0}], "PaymentsToSuppliers": [{"Supplier": "Name", "Amount": 0}] }"""
+        prompt = """Analyze daily journal page. Map sections to: CustomerDues, PaymentsReceived, GoodsReceived, PaymentsToSuppliers.
+        Return JSON: { "Date": "YYYY-MM-DD", 
+        "CustomerDues": [{"Party": "Name", "Amount": 0}], 
+        "PaymentsReceived": [{"Party": "Name", "Amount": 0, "Mode": "Cash"}], 
+        "GoodsReceived": [{"Supplier": "Name", "Items": "Desc", "Amount": 0}], 
+        "PaymentsToSuppliers": [{"Supplier": "Name", "Amount": 0, "Mode": "Cash"}] }"""
         response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}]}])
         return extract_json_from_text(response.choices[0].message.content)
     except: return None
@@ -160,7 +170,7 @@ def generate_pdf(party, df, start, end):
         pdf.cell(30, 7, f"{bal:,.2f}", 1, 1)
     return pdf.output(dest='S').encode('latin-1')
 
-# --- 4. NAVIGATION HELPER (Fixes Double Click Bug) ---
+# --- 4. NAV HELPER ---
 def go_to(page):
     st.session_state['page'] = page
     st.rerun()
@@ -179,10 +189,10 @@ def screen_home():
     c1, c2, c3 = st.columns(3)
     if c1.button("📝\nEntry"): go_to('manual')
     if c2.button("📒\nLedger"): go_to('ledger')
-    if c3.button("📸\nScan"): go_to('scan_daily')
+    if c3.button("🔔\nRemind"): go_to('reminders') # NEW REMINDERS
         
     c4, c5, c6 = st.columns(3)
-    if c4.button("📂\nOld Dues"): go_to('scan_historical')
+    if c4.button("📸\nScan"): go_to('scan_daily')
     if c5.button("⚙️\nTools"): go_to('tools')
     if c6.button("📊\nReports"): st.toast("Coming Soon")
 
@@ -201,20 +211,83 @@ def screen_home():
     col_a.metric("Today's Sales", f"₹{sale_today:,.0f}")
     col_b.metric("Today's Collection", f"₹{pymt_today:,.0f}")
 
+def screen_reminders():
+    st.markdown("### 🔔 Payment Reminders")
+    if st.button("🏠 Home", use_container_width=True): go_to('home')
+    
+    with st.spinner("Analyzing all accounts..."):
+        # 1. Calculate Balances
+        dues = fetch_sheet_data("CustomerDues")
+        pymt = fetch_sheet_data("PaymentsReceived")
+        
+        # Group sales
+        sales_map = {}
+        if not dues.empty:
+            sales_map = dues.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum()).to_dict()
+            
+        # Group payments
+        pymt_map = {}
+        if not pymt.empty:
+            pymt_map = pymt.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum()).to_dict()
+            
+        # 2. Get Phones
+        master = fetch_sheet_data("Party_Master")
+        phone_map = {}
+        if not master.empty:
+            for _, r in master.iterrows():
+                if str(r.get("Phone", "")).strip():
+                    phone_map[r["Name"]] = str(r["Phone"]).strip()
+
+        # 3. Build List
+        all_parties = set(list(sales_map.keys()) + list(pymt_map.keys()))
+        debtors = []
+        for p in all_parties:
+            bal = sales_map.get(p, 0) - pymt_map.get(p, 0)
+            if bal > 100: # Only show if owing > 100
+                debtors.append({
+                    "Party": p,
+                    "Balance": bal,
+                    "Phone": phone_map.get(p, "")
+                })
+        
+        debtors.sort(key=lambda x: x["Balance"], reverse=True)
+        
+    st.write(f"**{len(debtors)} Parties** owe you money.")
+    
+    for d in debtors:
+        with st.container(border=True):
+            c1, c2 = st.columns([3, 1])
+            c1.write(f"**{d['Party']}**")
+            c1.caption(f"Phone: {d['Phone'] if d['Phone'] else 'Not Saved'}")
+            c1.write(f"🔴 ₹{d['Balance']:,.0f}")
+            
+            # WhatsApp Logic
+            msg = f"Hello {d['Party']}, your pending balance with Gautam Pharma is Rs. {d['Balance']:,.0f}. Please pay at the earliest."
+            encoded_msg = urllib.parse.quote(msg)
+            
+            if d['Phone']:
+                # Clean phone number (remove spaces, ensure 91)
+                clean_ph = re.sub(r'\D', '', d['Phone'])
+                if not clean_ph.startswith("91") and len(clean_ph) == 10: clean_ph = "91" + clean_ph
+                link = f"https://wa.me/{clean_ph}?text={encoded_msg}"
+            else:
+                # Generic link (user selects contact)
+                link = f"https://wa.me/?text={encoded_msg}"
+                
+            c2.link_button("💬 Send", link)
+
 def screen_tools():
     st.markdown("### ⚙️ Admin Tools")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
     
     tab1, tab2, tab3, tab4 = st.tabs(["🔄 Merge", "✏️ Edit Txn", "📇 Party Info", "🧨 Reset"])
     
-    # 1. MERGE PARTIES
     with tab1:
         st.write("Combine two party names.")
         parties = get_all_party_names()
         c1, c2 = st.columns(2)
         old = c1.selectbox("From (Wrong)", parties, index=None, placeholder="Search...")
         new = c2.selectbox("To (Correct)", parties, index=None, placeholder="Search...")
-        
         if st.button("Merge") and old and new:
             sh = get_sheet_object()
             count = 0
@@ -237,15 +310,10 @@ def screen_tools():
             st.success(f"Merged {count} entries!")
             st.cache_data.clear()
 
-    # 2. SMART EDIT TRANSACTIONS (Fixed User Issue #1 & #3)
     with tab2:
         st.write("Find and Edit specific transactions.")
         sheet_choice = st.selectbox("Sheet", ["CustomerDues", "PaymentsReceived", "GoodsReceived"])
-        
-        # Filter BEFORE loading
-        parties = get_all_party_names()
-        f_party = st.selectbox("Filter by Party (Optional)", ["All"] + parties)
-        
+        f_party = st.selectbox("Filter by Party (Optional)", ["All"] + get_all_party_names())
         c1, c2 = st.columns(2)
         f_start = c1.date_input("Start Date", date.today().replace(day=1))
         f_end = c2.date_input("End Date", date.today())
@@ -253,62 +321,55 @@ def screen_tools():
         if st.button("🔎 Load Transactions"):
             df = fetch_sheet_data(sheet_choice)
             if not df.empty:
-                # Apply Filters
                 if f_party != "All":
                     col = "Party" if "Party" in df.columns else "Supplier"
-                    if col in df.columns:
-                        df = df[df[col] == f_party]
-                
-                # Date Filter
+                    if col in df.columns: df = df[df[col] == f_party]
                 if "Date" in df.columns:
                     df["DateObj"] = pd.to_datetime(df["Date"], errors='coerce').dt.date
-                    df = df[(df["DateObj"] >= f_start) & (df["DateObj"] <= f_end)]
-                    df = df.drop(columns=["DateObj"])
-                
+                    df = df[(df["DateObj"] >= f_start) & (df["DateObj"] <= f_end)].drop(columns=["DateObj"])
                 st.session_state['edit_df'] = df
                 st.session_state['edit_sheet'] = sheet_choice
-            else:
-                st.warning("No data found.")
             
         if 'edit_df' in st.session_state:
-            st.write(f"Editing {len(st.session_state['edit_df'])} rows:")
             edited = st.data_editor(st.session_state['edit_df'], num_rows="dynamic", use_container_width=True)
-            
-            if st.button("💾 Save Changes to Sheet"):
+            if st.button("💾 Save Changes"):
                 try:
-                    # WARNING: This simple version appends. 
-                    # For true row-level editing in GSheets without DB ID, we reload whole sheet.
-                    # This is safe for <2000 rows.
-                    sh = get_sheet_object()
-                    ws = sh.worksheet(st.session_state['edit_sheet'])
-                    
-                    # We need to preserve rows NOT in filter? 
-                    # Complex. For safety in this "Simple" app, we will just Append new rows?
-                    # No, user expects update. 
-                    # SAFEST STRATEGY: 
-                    # 1. Download FULL sheet.
-                    # 2. Match rows based on content (risky if dupes) or just overwrite filtered range?
-                    # 3. Actually, the safest for this scale is to warn user:
-                    st.warning("⚠️ Note: To ensure data safety, please delete the old row using 'Delete' key in editor and add new one.")
-                    
-                    # Actually, let's just re-save the WHOLE sheet if filter was "All", 
-                    # but if filtered, we can't easily merge back.
-                    # Simplified solution for this version:
-                    st.info("Saving disabled in Filter Mode to prevent data loss. Please select 'All' parties to enable Full Sheet Editing.")
-                    
                     if f_party == "All":
+                        sh = get_sheet_object()
+                        ws = sh.worksheet(st.session_state['edit_sheet'])
                         ws.clear()
-                        data_list = [edited.columns.tolist()] + edited.astype(str).values.tolist()
-                        ws.update(data_list)
+                        ws.update([edited.columns.tolist()] + edited.astype(str).values.tolist())
                         st.success("Sheet Updated!")
                         st.cache_data.clear()
+                    else: st.warning("To save, please filter by 'All' first (Safety Lock).")
                 except Exception as e: st.error(str(e))
 
-    # 3. PARTY DETAILS (Fixed User Issue #4)
     with tab3:
         st.write("Edit Party Names & Details.")
+        
+        # 1. Fetch Existing Master Data
         df_master = fetch_sheet_data("Party_Master")
-        # Allow editing all columns
+        
+        # 2. Fetch All Names from Ledger
+        all_ledger_names = get_all_party_names()
+        
+        # 3. Merge: Add missing names to Master (in memory)
+        if not df_master.empty:
+            existing_names = df_master["Name"].astype(str).tolist()
+        else:
+            existing_names = []
+            df_master = pd.DataFrame(columns=["Name", "Type", "Phone", "Address"])
+            
+        new_rows = []
+        for name in all_ledger_names:
+            if name not in existing_names:
+                new_rows.append({"Name": name, "Type": "Customer", "Phone": "", "Address": ""})
+        
+        if new_rows:
+            df_new = pd.DataFrame(new_rows)
+            df_master = pd.concat([df_master, df_new], ignore_index=True)
+            
+        # 4. Show Editor
         edited_master = st.data_editor(df_master, num_rows="dynamic", use_container_width=True)
         
         if st.button("Save Party Master"):
@@ -316,13 +377,11 @@ def screen_tools():
                 sh = get_sheet_object()
                 ws = sh.worksheet("Party_Master")
                 ws.clear()
-                data_list = [edited_master.columns.tolist()] + edited_master.astype(str).values.tolist()
-                ws.update(data_list)
+                ws.update([edited_master.columns.tolist()] + edited_master.astype(str).values.tolist())
                 st.success("Saved!")
                 st.cache_data.clear()
             except Exception as e: st.error(str(e))
 
-    # 4. RESET
     with tab4:
         st.error("⚠️ **FACTORY RESET**")
         confirm_text = st.text_input("Type WIPE DATA to confirm:")
@@ -339,29 +398,22 @@ def screen_tools():
 def screen_digitize_ledger():
     st.markdown("### 📂 Digitize Old Ledger")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
-    
-    img = st.file_uploader("Upload Image", type=['jpg', 'png'])
+    img = st.file_uploader("Upload Image", type=['jpg', 'png', 'jpeg'])
     if img and st.button("🚀 Process"):
         with st.spinner("Analyzing..."):
             data = extract_single_party_ledger(img.read())
             if data: st.session_state['hist_data'] = data; st.rerun()
-            else: st.error("Failed.")
             
     if 'hist_data' in st.session_state:
         data = st.session_state['hist_data']
         with st.form("save_hist"):
-            # 1. EDITABLE NAME (Fixed User Issue #6)
             scanned = data.get("PartyName", "")
-            parties = get_all_party_names()
-            match = difflib.get_close_matches(scanned, parties, n=1, cutoff=0.6)
-            default_val = match[0] if match else scanned
+            final_name = smart_match_party(scanned)
+            st.text_input("Party Name", value=final_name, disabled=True)
             
-            final_name = st.text_input("Party Name", value=default_val)
-            
-            # 2. DATE FOR OPENING BALANCE (Fixed User Issue #2)
             c1, c2 = st.columns(2)
             op_bal = c1.number_input("Opening Balance", value=float(data.get("OpeningBalance", 0)))
-            op_date = c2.date_input("Opening Bal Date", date.today().replace(month=4, day=1)) # Default to April 1st
+            op_date = c2.date_input("Opening Bal Date", date.today().replace(month=4, day=1))
             
             df = pd.DataFrame(data.get("Transactions", []))
             for c in ["Date", "Particulars", "Debit", "Credit"]: 
@@ -371,16 +423,12 @@ def screen_digitize_ledger():
             if st.form_submit_button("Save"):
                 sh = get_sheet_object()
                 s_rows, p_rows = [], []
-                
                 if op_bal > 0: s_rows.append([str(op_date), final_name, op_bal])
-                
                 for _, r in edited_df.iterrows():
                     d = r.get("Date", str(date.today()))
-                    dr = clean_amount(r.get("Debit", 0))
-                    cr = clean_amount(r.get("Credit", 0))
+                    dr, cr = clean_amount(r.get("Debit", 0)), clean_amount(r.get("Credit", 0))
                     if dr > 0: s_rows.append([d, final_name, dr])
                     if cr > 0: p_rows.append([d, final_name, cr, "Old Ledger"])
-                
                 if s_rows: sh.worksheet("CustomerDues").append_rows(s_rows)
                 if p_rows: sh.worksheet("PaymentsReceived").append_rows(p_rows)
                 st.success("Saved!"); st.cache_data.clear(); del st.session_state['hist_data']
@@ -388,7 +436,6 @@ def screen_digitize_ledger():
 def screen_manual():
     st.markdown("### 📝 New Entry")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
-    
     parties = get_all_party_names()
     with st.form("manual"):
         c1, c2 = st.columns(2)
@@ -396,12 +443,11 @@ def screen_manual():
         e_type = c2.selectbox("Type", ["Sale (Bill)", "Payment Received", "Supplier Payment", "Purchase (Goods)"])
         
         c3, c4 = st.columns(2)
-        # Selectbox now works as search + select
         p_in = c3.selectbox("Party / Supplier", ["Add New"] + parties, index=None, placeholder="Search...")
         if p_in == "Add New": party = c3.text_input("New Name")
         else: party = p_in
-        
         amt = c4.number_input("Amount", min_value=0.0)
+        
         extra = ""
         if e_type in ["Payment Received", "Supplier Payment"]: extra = st.selectbox("Mode", ["Cash", "UPI", "Cheque"])
         elif e_type == "Purchase (Goods)": extra = st.text_input("Items", "Goods")
@@ -420,7 +466,6 @@ def screen_manual():
 def screen_ledger():
     st.markdown("### 📒 Party Ledger")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
-    
     sel_party = st.selectbox("Party", get_all_party_names(), index=None, placeholder="Search...")
     
     if 'l_s' not in st.session_state: st.session_state['l_s'] = date.today().replace(day=1)
@@ -459,13 +504,10 @@ def screen_ledger():
             df = pd.DataFrame(ledger).sort_values('Date')
             df.columns = ["Date", "Description", "Debit", "Credit"]
             bal = df['Debit'].sum() - df['Credit'].sum()
-            
             st.dataframe(df, use_container_width=True)
             st.metric("Net Balance", f"₹{abs(bal):,.2f}", "Receivable" if bal>0 else "Payable")
-            
             msg = f"Hello {sel_party}, Balance: {bal}"
-            st.link_button("💬 Share on WhatsApp", f"https://wa.me/?text={urllib.parse.quote(msg)}", use_container_width=True)
-            
+            st.link_button("💬 WhatsApp", f"https://wa.me/?text={urllib.parse.quote(msg)}", use_container_width=True)
             pdf_bytes = generate_pdf(sel_party, df, s, e)
             st.download_button("📄 PDF", pdf_bytes, "stmt.pdf", "application/pdf", use_container_width=True)
         else: st.info("No Transactions Found.")
@@ -481,15 +523,54 @@ def screen_scan_daily():
             if data: st.session_state['daily_data'] = data; st.rerun()
             
     if 'daily_data' in st.session_state:
-        st.json(st.session_state['daily_data'])
-        if st.button("Save All"):
-            sh = get_sheet_object()
-            d = st.session_state['daily_data']
-            dt = d.get("Date", str(date.today()))
-            for k, sheet in {"CustomerDues":"CustomerDues", "PaymentsReceived":"PaymentsReceived"}.items():
-                 rows = [[dt, r["Party"], r["Amount"], r.get("Mode","")] for r in d.get(k, []) if "Party" in r]
-                 if rows: sh.worksheet(sheet).append_rows(rows)
-            st.success("Saved!"); del st.session_state['daily_data']
+        data = st.session_state['daily_data']
+        with st.form("daily_save"):
+            st.write("### Review & Fix Data")
+            txn_date = st.date_input("Entry Date", date.today())
+            
+            st.markdown("#### 1. Sales (Customer Dues)")
+            raw_sales = data.get("CustomerDues", [])
+            for r in raw_sales:
+                if "Party" in r: r["Party"] = smart_match_party(r["Party"])
+            df_sales = pd.DataFrame(raw_sales) if raw_sales else pd.DataFrame(columns=["Party", "Amount"])
+            edited_sales = st.data_editor(df_sales, num_rows="dynamic", key="s_ed")
+            
+            st.markdown("#### 2. Payments Received")
+            raw_pymt = data.get("PaymentsReceived", [])
+            for r in raw_pymt:
+                if "Party" in r: r["Party"] = smart_match_party(r["Party"])
+            df_pymt = pd.DataFrame(raw_pymt) if raw_pymt else pd.DataFrame(columns=["Party", "Amount", "Mode"])
+            edited_pymt = st.data_editor(df_pymt, num_rows="dynamic", key="p_ed")
+            
+            st.markdown("#### 3. Supplier Payments")
+            raw_supp = data.get("PaymentsToSuppliers", [])
+            df_supp = pd.DataFrame(raw_supp) if raw_supp else pd.DataFrame(columns=["Supplier", "Amount", "Mode"])
+            edited_supp = st.data_editor(df_supp, num_rows="dynamic", key="su_ed")
+            
+            st.markdown("#### 4. Purchases (Goods)")
+            raw_goods = data.get("GoodsReceived", [])
+            df_goods = pd.DataFrame(raw_goods) if raw_goods else pd.DataFrame(columns=["Supplier", "Items", "Amount"])
+            edited_goods = st.data_editor(df_goods, num_rows="dynamic", key="g_ed")
+
+            if st.form_submit_button("💾 Save All"):
+                sh = get_sheet_object()
+                dt = str(txn_date)
+                
+                rows = [[dt, r.get("Party"), clean_amount(r.get("Amount"))] for _, r in edited_sales.iterrows() if r.get("Party")]
+                if rows: sh.worksheet("CustomerDues").append_rows(rows)
+                
+                rows = [[dt, r.get("Party"), clean_amount(r.get("Amount")), r.get("Mode", "Cash")] for _, r in edited_pymt.iterrows() if r.get("Party")]
+                if rows: sh.worksheet("PaymentsReceived").append_rows(rows)
+                
+                rows = [[dt, r.get("Supplier"), clean_amount(r.get("Amount")), r.get("Mode", "Cash")] for _, r in edited_supp.iterrows() if r.get("Supplier")]
+                if rows: sh.worksheet("PaymentsToSuppliers").append_rows(rows)
+                
+                rows = [[dt, r.get("Supplier"), r.get("Items", ""), clean_amount(r.get("Amount"))] for _, r in edited_goods.iterrows() if r.get("Supplier")]
+                if rows: sh.worksheet("GoodsReceived").append_rows(rows)
+
+                st.success("Saved Successfully!")
+                del st.session_state['daily_data']
+                st.cache_data.clear()
 
 # --- MAIN ---
 if 'page' not in st.session_state: st.session_state['page'] = 'home'
@@ -500,3 +581,4 @@ elif st.session_state['page'] == 'ledger': screen_ledger()
 elif st.session_state['page'] == 'scan_historical': screen_digitize_ledger()
 elif st.session_state['page'] == 'scan_daily': screen_scan_daily()
 elif st.session_state['page'] == 'tools': screen_tools()
+elif st.session_state['page'] == 'reminders': screen_reminders()
