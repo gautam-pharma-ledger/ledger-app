@@ -101,6 +101,7 @@ def show_splash_screen():
     if "splash_shown" not in st.session_state:
         splash = st.empty()
         with splash.container():
+            # Your correct RAW image link
             logo_url = "https://raw.githubusercontent.com/gautam-pharma-ledger/ledger-app/main/Photoroom-20260102_114853282.png"
             
             st.markdown(f"""
@@ -108,22 +109,58 @@ def show_splash_screen():
                 <img src="{logo_url}">
                 <div class="splash-sub">Gautam Pharma</div>
             </div>
+            <style>
+                .splash-container {{
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 70vh;
+                    flex-direction: column;
+                    animation: fadeOut 4s forwards; /* Animation lasts 4 seconds */
+                }}
+                .splash-container img {{
+                    width: 150px; 
+                    margin-bottom: 20px;
+                    border-radius: 20px;
+                    box-shadow: 0 0 30px rgba(41, 121, 255, 0.2);
+                }}
+                .splash-sub {{
+                    font-size: 24px;
+                    color: #a0a0a0;
+                    font-weight: 600;
+                    letter-spacing: 2px;
+                    text-transform: uppercase;
+                }}
+                @keyframes fadeOut {{
+                    0% {{ opacity: 0; transform: scale(0.8); }}
+                    15% {{ opacity: 1; transform: scale(1); }}
+                    85% {{ opacity: 1; transform: scale(1); }} /* Stays visible until 3.5 seconds */
+                    100% {{ opacity: 0; transform: scale(1.1); }}
+                }}
+            </style>
             """, unsafe_allow_html=True)
-            time.sleep(2.5)
+            time.sleep(4) # App waits 4 seconds
         splash.empty()
         st.session_state["splash_shown"] = True
 
 # --- 2. PASSWORD PROTECTION ---
 def check_password():
+    """Returns `True` if the user had the correct password."""
     def password_entered():
-        if st.session_state["password"] == st.secrets["APP_PASSWORD"]:
+        # FIX: Checks for Secret first. If missing, uses "Gautam123"
+        if "APP_PASSWORD" in st.secrets:
+            correct_password = st.secrets["APP_PASSWORD"]
+        else:
+            correct_password = "Gautam123"
+            
+        if st.session_state["password"] == correct_password:
             st.session_state["password_correct"] = True
             del st.session_state["password"]
         else:
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        show_splash_screen() 
+        show_splash_screen() # Show splash before login
         st.text_input("Enter Password", type="password", on_change=password_entered, key="password")
         return False
     elif not st.session_state["password_correct"]:
@@ -133,6 +170,7 @@ def check_password():
     else:
         return True
 
+# STOP APP IF PASSWORD IS WRONG
 if not check_password():
     st.stop()
 
@@ -716,3 +754,4 @@ elif st.session_state['page'] == 'scan_historical': screen_digitize_ledger()
 elif st.session_state['page'] == 'scan_daily': screen_scan_daily()
 elif st.session_state['page'] == 'tools': screen_tools()
 elif st.session_state['page'] == 'reminders': screen_reminders()
+
