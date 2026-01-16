@@ -19,17 +19,16 @@ st.set_page_config(page_title="Gautam Pharma", layout="centered", page_icon="�
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem; padding-bottom: 5rem; }
-    .total-dues-banner {
-        background-color: #aa0000;
-        color: white;
-        padding: 15px;
-        text-align: center;
-        border-radius: 12px;
-        font-size: 20px;
-        font-weight: bold;
-        margin-bottom: 20px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+    
+    /* Metrics Styling */
+    div[data-testid="metric-container"] {
+        background-color: #f8f9fa;
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid #dee2e6;
     }
+    
+    /* Big Action Buttons */
     .stButton>button {
         width: 100%;
         height: 5em;
@@ -47,8 +46,12 @@ st.markdown("""
         background-color: #fff5f5;
         transform: translateY(-2px);
     }
-    /* Small buttons for internal tools */
-    .small-btn > button { height: 3em !important; }
+    
+    /* Sort Buttons (Small) */
+    .sort-btn > button {
+        height: 2.5em !important;
+        font-size: 12px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -80,16 +83,12 @@ def fetch_sheet_data(sheet_name):
 
 def get_all_party_names():
     names = set()
-    # 1. Get from Transactions
+    master = fetch_sheet_data("Party_Master")
+    if not master.empty: names.update(master["Name"].astype(str).unique())
     for sheet in ["CustomerDues", "PaymentsReceived"]:
         df = fetch_sheet_data(sheet)
         if not df.empty and "Party" in df.columns:
             names.update(df["Party"].astype(str).unique())
-            
-    # 2. Get from Master (in case some have no transactions yet)
-    master = fetch_sheet_data("Party_Master")
-    if not master.empty: names.update(master["Name"].astype(str).unique())
-    
     return sorted([n.strip() for n in list(names) if n.strip()])
 
 def clean_amount(val):
@@ -180,101 +179,148 @@ def go_to(page):
 def screen_home():
     dues = fetch_sheet_data("CustomerDues")
     pymt = fetch_sheet_data("PaymentsReceived")
-    total_sales = dues["Amount"].apply(clean_amount).sum() if not dues.empty else 0
-    total_pymt = pymt["Amount"].apply(clean_amount).sum() if not pymt.empty else 0
-    market_outstanding = total_sales - total_pymt
     
-    st.markdown(f"""<div class="total-dues-banner">Total Dues: ₹ {market_outstanding:,.0f} ℹ️</div>""", unsafe_allow_html=True)
+    # Calculate Individual Balances first
+    # (This is more accurate than just sum of columns)
+    parties = get_all_party_names()
     
+    total_receivable = 0 # People owe me (Positive)
+    total_payable = 0    # I owe them (Negative)
+    
+    # Simple Groupby summation
+    if not dues.empty and not pymt.empty:
+        sales = dues.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
+        cols = pymt.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
+        
+        # Merge
+        all_p = sales.index.union(cols.index)
+        for p in all_p:
+            bal = sales.get(p, 0) - cols.get(p, 0)
+            if bal > 0: total_receivable += bal
+            else: total_payable += bal # This will be negative
+
+    net_position = total_receivable + total_payable
+    
+    st.markdown("### 📊 Market Position")
+    
+    c1, c2 = st.columns(2)
+    c1.metric("🟢 Receivable (To Take)", f"₹{total_receivable:,.0f}")
+    c2.metric("🔴 Payable (To Give)", f"₹{abs(total_payable):,.0f}")
+    
+    st.metric("Net Market Dues", f"₹{net_position:,.0f}", delta_color="normal")
+    
+    st.markdown("---")
+    
+    # MENU
     c1, c2, c3 = st.columns(3)
     if c1.button("📝\nEntry"): go_to('manual')
     if c2.button("📒\nLedger"): go_to('ledger')
-    if c3.button("🔔\nRemind"): go_to('reminders') # NEW REMINDERS
+    if c3.button("🔔\nRemind"): go_to('reminders')
         
     c4, c5, c6 = st.columns(3)
     if c4.button("📸\nScan"): go_to('scan_daily')
     if c5.button("⚙️\nTools"): go_to('tools')
-    if c6.button("📊\nReports"): st.toast("Coming Soon")
-
-    st.markdown("---")
-    st.markdown("##### 📅 Today's Summary")
-    today = str(date.today())
-    
-    def get_sum(df, d_str):
-        if df.empty or "Date" not in df.columns: return 0
-        return df[df['Date'].astype(str) == d_str]["Amount"].apply(clean_amount).sum()
-
-    sale_today = get_sum(dues, today)
-    pymt_today = get_sum(pymt, today)
-    
-    col_a, col_b = st.columns(2)
-    col_a.metric("Today's Sales", f"₹{sale_today:,.0f}")
-    col_b.metric("Today's Collection", f"₹{pymt_today:,.0f}")
+    if c6.button("📂\nOld"): go_to('scan_historical')
 
 def screen_reminders():
     st.markdown("### 🔔 Payment Reminders")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
     
-    with st.spinner("Analyzing all accounts..."):
-        # 1. Calculate Balances
+    # 1. Load Data
+    with st.spinner("Calculating all balances..."):
         dues = fetch_sheet_data("CustomerDues")
         pymt = fetch_sheet_data("PaymentsReceived")
-        
-        # Group sales
-        sales_map = {}
-        if not dues.empty:
-            sales_map = dues.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum()).to_dict()
-            
-        # Group payments
-        pymt_map = {}
-        if not pymt.empty:
-            pymt_map = pymt.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum()).to_dict()
-            
-        # 2. Get Phones
         master = fetch_sheet_data("Party_Master")
-        phone_map = {}
+        
+        # Phone Map
+        phones = {}
         if not master.empty:
             for _, r in master.iterrows():
-                if str(r.get("Phone", "")).strip():
-                    phone_map[r["Name"]] = str(r["Phone"]).strip()
+                phones[r["Name"]] = str(r.get("Phone", ""))
 
-        # 3. Build List
-        all_parties = set(list(sales_map.keys()) + list(pymt_map.keys()))
-        debtors = []
-        for p in all_parties:
-            bal = sales_map.get(p, 0) - pymt_map.get(p, 0)
-            if bal > 100: # Only show if owing > 100
-                debtors.append({
-                    "Party": p,
-                    "Balance": bal,
-                    "Phone": phone_map.get(p, "")
-                })
-        
-        debtors.sort(key=lambda x: x["Balance"], reverse=True)
-        
-    st.write(f"**{len(debtors)} Parties** owe you money.")
-    
-    for d in debtors:
-        with st.container(border=True):
-            c1, c2 = st.columns([3, 1])
-            c1.write(f"**{d['Party']}**")
-            c1.caption(f"Phone: {d['Phone'] if d['Phone'] else 'Not Saved'}")
-            c1.write(f"🔴 ₹{d['Balance']:,.0f}")
-            
-            # WhatsApp Logic
-            msg = f"Hello {d['Party']}, your pending balance with Gautam Pharma is Rs. {d['Balance']:,.0f}. Please pay at the earliest."
-            encoded_msg = urllib.parse.quote(msg)
-            
-            if d['Phone']:
-                # Clean phone number (remove spaces, ensure 91)
-                clean_ph = re.sub(r'\D', '', d['Phone'])
-                if not clean_ph.startswith("91") and len(clean_ph) == 10: clean_ph = "91" + clean_ph
-                link = f"https://wa.me/{clean_ph}?text={encoded_msg}"
-            else:
-                # Generic link (user selects contact)
-                link = f"https://wa.me/?text={encoded_msg}"
+        # Balances
+        bals = {}
+        if not dues.empty:
+            for _, r in dues.iterrows():
+                p = r["Party"]
+                bals[p] = bals.get(p, 0) + clean_amount(r["Amount"])
+        if not pymt.empty:
+            for _, r in pymt.iterrows():
+                p = r["Party"]
+                bals[p] = bals.get(p, 0) - clean_amount(r["Amount"])
                 
-            c2.link_button("💬 Send", link)
+        # List of Dicts
+        data = []
+        for p, amt in bals.items():
+            if amt != 0: # Show ALL non-zero
+                data.append({"Party": p, "Balance": amt, "Phone": phones.get(p, "")})
+                
+    # 2. Sorting Options
+    st.write("Sort By:")
+    s1, s2, s3, s4 = st.columns(4)
+    sort_mode = st.session_state.get('sort_mode', 'High-Low')
+    
+    if s1.button("High to Low"): st.session_state['sort_mode'] = 'High-Low'; st.rerun()
+    if s2.button("Low to High"): st.session_state['sort_mode'] = 'Low-High'; st.rerun()
+    if s3.button("A - Z"): st.session_state['sort_mode'] = 'A-Z'; st.rerun()
+    if s4.button("Z - A"): st.session_state['sort_mode'] = 'Z-A'; st.rerun()
+    
+    # Apply Sort
+    if st.session_state.get('sort_mode') == 'High-Low':
+        data.sort(key=lambda x: x['Balance'], reverse=True)
+    elif st.session_state.get('sort_mode') == 'Low-High':
+        data.sort(key=lambda x: x['Balance'])
+    elif st.session_state.get('sort_mode') == 'A-Z':
+        data.sort(key=lambda x: x['Party'])
+    elif st.session_state.get('sort_mode') == 'Z-A':
+        data.sort(key=lambda x: x['Party'], reverse=True)
+
+    # 3. Multi-Select Checkboxes
+    st.markdown("---")
+    st.write("Select parties to focus on:")
+    
+    # We use a trick: Create a DF for Data Editor with checkboxes
+    df_disp = pd.DataFrame(data)
+    df_disp["Select"] = False # Default unchecked
+    
+    # Reorder columns
+    df_disp = df_disp[["Select", "Party", "Balance", "Phone"]]
+    
+    edited_df = st.data_editor(
+        df_disp, 
+        column_config={
+            "Select": st.column_config.CheckboxColumn("Select", default=False),
+            "Balance": st.column_config.NumberColumn(format="₹%d"),
+        },
+        hide_index=True,
+        use_container_width=True
+    )
+    
+    # 4. Action Buttons for Selected
+    selected_rows = edited_df[edited_df["Select"] == True]
+    
+    if not selected_rows.empty:
+        st.success(f"Selected {len(selected_rows)} parties.")
+        st.write("👇 Click to WhatsApp each:")
+        
+        for _, row in selected_rows.iterrows():
+            p = row["Party"]
+            b = row["Balance"]
+            ph = row["Phone"]
+            
+            msg = f"Hello {p}, Your pending balance is Rs {b:,.0f}. Please pay soon."
+            
+            # Link
+            if ph:
+                clean_ph = re.sub(r'\D', '', str(ph))
+                if len(clean_ph) == 10: clean_ph = "91" + clean_ph
+                link = f"https://wa.me/{clean_ph}?text={urllib.parse.quote(msg)}"
+            else:
+                link = f"https://wa.me/?text={urllib.parse.quote(msg)}"
+                
+            st.link_button(f"📲 Send to {p} (₹{b:,.0f})", link)
+    else:
+        st.info("Tick the boxes above to see action buttons.")
 
 def screen_tools():
     st.markdown("### ⚙️ Admin Tools")
@@ -312,8 +358,9 @@ def screen_tools():
 
     with tab2:
         st.write("Find and Edit specific transactions.")
-        sheet_choice = st.selectbox("Sheet", ["CustomerDues", "PaymentsReceived", "GoodsReceived"])
-        f_party = st.selectbox("Filter by Party (Optional)", ["All"] + get_all_party_names())
+        # ADDED SUPPLIER PAYMENTS HERE
+        sheet_choice = st.selectbox("Sheet", ["CustomerDues", "PaymentsReceived", "PaymentsToSuppliers", "GoodsReceived"])
+        f_party = st.selectbox("Filter by Party", ["All"] + get_all_party_names())
         c1, c2 = st.columns(2)
         f_start = c1.date_input("Start Date", date.today().replace(day=1))
         f_end = c2.date_input("End Date", date.today())
@@ -346,40 +393,27 @@ def screen_tools():
 
     with tab3:
         st.write("Edit Party Names & Details.")
-        
-        # 1. Fetch Existing Master Data
         df_master = fetch_sheet_data("Party_Master")
-        
-        # 2. Fetch All Names from Ledger
         all_ledger_names = get_all_party_names()
         
-        # 3. Merge: Add missing names to Master (in memory)
-        if not df_master.empty:
-            existing_names = df_master["Name"].astype(str).tolist()
-        else:
-            existing_names = []
-            df_master = pd.DataFrame(columns=["Name", "Type", "Phone", "Address"])
+        if not df_master.empty: existing_names = df_master["Name"].astype(str).tolist()
+        else: existing_names = []; df_master = pd.DataFrame(columns=["Name", "Type", "Phone", "Address"])
             
         new_rows = []
         for name in all_ledger_names:
             if name not in existing_names:
                 new_rows.append({"Name": name, "Type": "Customer", "Phone": "", "Address": ""})
         
-        if new_rows:
-            df_new = pd.DataFrame(new_rows)
-            df_master = pd.concat([df_master, df_new], ignore_index=True)
+        if new_rows: df_master = pd.concat([df_master, pd.DataFrame(new_rows)], ignore_index=True)
             
-        # 4. Show Editor
         edited_master = st.data_editor(df_master, num_rows="dynamic", use_container_width=True)
-        
         if st.button("Save Party Master"):
             try:
                 sh = get_sheet_object()
                 ws = sh.worksheet("Party_Master")
                 ws.clear()
                 ws.update([edited_master.columns.tolist()] + edited_master.astype(str).values.tolist())
-                st.success("Saved!")
-                st.cache_data.clear()
+                st.success("Saved!"); st.cache_data.clear()
             except Exception as e: st.error(str(e))
 
     with tab4:
