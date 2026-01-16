@@ -196,7 +196,6 @@ def screen_home():
     total_receivable = 0
     total_payable = 0
     
-    # 1. Customer Dues (Receivable)
     if not dues.empty and not pymt.empty:
         sales = dues.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         cols = pymt.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
@@ -205,7 +204,6 @@ def screen_home():
             bal = sales.get(p, 0) - cols.get(p, 0)
             if bal > 0: total_receivable += bal
             
-    # 2. Supplier Dues (Payable)
     if not goods.empty and not supp_pay.empty:
         purchases = goods.groupby("Supplier")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         paid_out = supp_pay.groupby("Supplier")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
@@ -310,14 +308,12 @@ def screen_reminders():
             b = row["Balance"]
             ph = row["Phone"]
             msg = f"Hello {p}, Your pending balance is Rs {b:,.0f}. Please pay soon."
-            
             if ph:
                 clean_ph = re.sub(r'\D', '', str(ph))
                 if len(clean_ph) == 10: clean_ph = "91" + clean_ph
                 link = f"https://wa.me/{clean_ph}?text={urllib.parse.quote(msg)}"
             else:
                 link = f"https://wa.me/?text={urllib.parse.quote(msg)}"
-                
             st.link_button(f"📲 Send to {p} (₹{b:,.0f})", link)
     else:
         st.info("Tick the boxes above to see action buttons.")
@@ -443,7 +439,7 @@ def screen_digitize_ledger():
             scanned = data.get("PartyName", "")
             final_name = smart_match_party(scanned)
             
-            # FIXED: Name is now editable (disabled=False by default)
+            # 1. EDITABLE NAME (Corrected)
             final_name_edited = st.text_input("Party Name", value=final_name)
             
             c1, c2 = st.columns(2)
@@ -458,12 +454,17 @@ def screen_digitize_ledger():
             if st.form_submit_button("Save"):
                 sh = get_sheet_object()
                 s_rows, p_rows = [], []
+                
+                # 2. Use UPDATED NAME for Opening Balance
                 if op_bal > 0: s_rows.append([str(op_date), final_name_edited, op_bal])
+                
+                # 3. Use UPDATED NAME for Transactions (FIXED BUG)
                 for _, r in edited_df.iterrows():
                     d = r.get("Date", str(date.today()))
                     dr, cr = clean_amount(r.get("Debit", 0)), clean_amount(r.get("Credit", 0))
                     if dr > 0: s_rows.append([d, final_name_edited, dr])
                     if cr > 0: p_rows.append([d, final_name_edited, cr, "Old Ledger"])
+                
                 if s_rows: sh.worksheet("CustomerDues").append_rows(s_rows)
                 if p_rows: sh.worksheet("PaymentsReceived").append_rows(p_rows)
                 st.success("Saved!"); st.cache_data.clear(); del st.session_state['hist_data']
@@ -524,7 +525,6 @@ def screen_ledger():
         supp_pay_df = fetch_sheet_data("PaymentsToSuppliers")
         
         ledger = []
-        
         if not d_df.empty:
             sub = d_df[d_df['Party'].astype(str) == sel_party]
             for _, r in sub.iterrows():
