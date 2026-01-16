@@ -15,35 +15,77 @@ import re
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Gautam Pharma", layout="centered", page_icon="💊")
 
-# --- CUSTOM CSS ---
+# --- CUSTOM CSS: DARK MODE FINTECH STYLE ---
 st.markdown("""
     <style>
-    .block-container { padding-top: 1rem; padding-bottom: 5rem; }
-    div[data-testid="metric-container"] {
-        background-color: #f8f9fa;
-        padding: 10px;
-        border-radius: 10px;
-        border: 1px solid #dee2e6;
+    /* 1. Main Background */
+    .stApp {
+        background-color: #0e1117;
+        color: #fafafa;
     }
+    
+    /* 2. Metric Cards (Dashboard Look) */
+    div[data-testid="metric-container"] {
+        background-color: #1e1e1e;
+        border: 1px solid #333;
+        padding: 15px;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        transition: transform 0.2s;
+    }
+    div[data-testid="metric-container"]:hover {
+        transform: scale(1.02);
+        border-color: #555;
+    }
+    div[data-testid="metric-container"] label {
+        color: #a0a0a0; /* Subtitle color */
+        font-size: 0.9rem;
+    }
+    div[data-testid="metric-container"] div[data-testid="stMetricValue"] {
+        color: #ffffff; /* Number color */
+        font-weight: 700;
+    }
+    
+    /* 3. Electric Buttons */
     .stButton>button {
         width: 100%;
-        height: 5em;
-        border-radius: 12px;
-        border: 1px solid #ddd;
-        background-color: #ffffff;
-        color: #333;
+        height: 4em;
+        background-color: #262730;
+        color: #ffffff;
+        border: 1px solid #4b4b4b;
+        border-radius: 10px;
         font-weight: 600;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        transition: all 0.2s;
+        transition: all 0.3s ease;
     }
     .stButton>button:hover {
-        border-color: #aa0000;
-        color: #aa0000;
-        background-color: #fff5f5;
+        background-color: #2979ff; /* Electric Blue */
+        border-color: #2979ff;
+        color: #ffffff;
+        box-shadow: 0 0 15px rgba(41, 121, 255, 0.4); /* Neon Glow */
         transform: translateY(-2px);
     }
-    .sort-btn > button { height: 2.5em !important; font-size: 12px; }
-    .small-btn > button { height: 3em !important; }
+    
+    /* 4. Inputs & Dropdowns */
+    div[data-baseweb="select"] > div, .stTextInput>div>div, .stDateInput>div>div, .stNumberInput>div>div {
+        background-color: #1e1e1e;
+        color: white;
+        border-color: #444;
+        border-radius: 8px;
+    }
+    
+    /* 5. Tabs */
+    button[data-baseweb="tab"] {
+        color: #ffffff;
+        background-color: transparent;
+    }
+    button[data-baseweb="tab"]:focus {
+        background-color: #262730;
+    }
+    
+    /* 6. Header Separator */
+    hr {
+        border-color: #333;
+    }
     </style>
 """, unsafe_allow_html=True)
 
