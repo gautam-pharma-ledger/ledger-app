@@ -83,12 +83,23 @@ def fetch_sheet_data(sheet_name):
 
 def get_all_party_names():
     names = set()
+    
+    # 1. Master List
     master = fetch_sheet_data("Party_Master")
     if not master.empty: names.update(master["Name"].astype(str).unique())
+    
+    # 2. Customers (Sales & Rx)
     for sheet in ["CustomerDues", "PaymentsReceived"]:
         df = fetch_sheet_data(sheet)
         if not df.empty and "Party" in df.columns:
             names.update(df["Party"].astype(str).unique())
+
+    # 3. Suppliers (Purchases & Payments) - NEW FIX
+    for sheet in ["GoodsReceived", "PaymentsToSuppliers"]:
+        df = fetch_sheet_data(sheet)
+        if not df.empty and "Supplier" in df.columns:
+            names.update(df["Supplier"].astype(str).unique())
+
     return sorted([n.strip() for n in list(names) if n.strip()])
 
 def clean_amount(val):
@@ -177,37 +188,43 @@ def go_to(page):
 # --- 5. SCREENS ---
 
 def screen_home():
+    # Fetch all data for Home Screen Metrics
     dues = fetch_sheet_data("CustomerDues")
     pymt = fetch_sheet_data("PaymentsReceived")
+    supp_pay = fetch_sheet_data("PaymentsToSuppliers")
+    goods = fetch_sheet_data("GoodsReceived")
     
-    # Calculate Individual Balances first
-    # (This is more accurate than just sum of columns)
-    parties = get_all_party_names()
+    total_receivable = 0
+    total_payable = 0
     
-    total_receivable = 0 # People owe me (Positive)
-    total_payable = 0    # I owe them (Negative)
-    
-    # Simple Groupby summation
+    # 1. Customer Dues (Receivable)
     if not dues.empty and not pymt.empty:
         sales = dues.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         cols = pymt.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
-        
-        # Merge
-        all_p = sales.index.union(cols.index)
-        for p in all_p:
+        all_cust = sales.index.union(cols.index)
+        for p in all_cust:
             bal = sales.get(p, 0) - cols.get(p, 0)
             if bal > 0: total_receivable += bal
-            else: total_payable += bal # This will be negative
+            # If negative (advanced payment from customer), technically payable, but keeping simple
+            
+    # 2. Supplier Dues (Payable)
+    if not goods.empty and not supp_pay.empty:
+        purchases = goods.groupby("Supplier")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
+        paid_out = supp_pay.groupby("Supplier")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
+        all_supp = purchases.index.union(paid_out.index)
+        for s in all_supp:
+            bal = purchases.get(s, 0) - paid_out.get(s, 0)
+            if bal > 0: total_payable += bal # I owe this much
 
-    net_position = total_receivable + total_payable
+    net_position = total_receivable - total_payable
     
     st.markdown("### 📊 Market Position")
     
     c1, c2 = st.columns(2)
     c1.metric("🟢 Receivable (To Take)", f"₹{total_receivable:,.0f}")
-    c2.metric("🔴 Payable (To Give)", f"₹{abs(total_payable):,.0f}")
+    c2.metric("🔴 Payable (To Give)", f"₹{total_payable:,.0f}")
     
-    st.metric("Net Market Dues", f"₹{net_position:,.0f}", delta_color="normal")
+    st.metric("Net Market Position", f"₹{net_position:,.0f}", delta_color="normal")
     
     st.markdown("---")
     
@@ -279,11 +296,9 @@ def screen_reminders():
     st.markdown("---")
     st.write("Select parties to focus on:")
     
-    # We use a trick: Create a DF for Data Editor with checkboxes
     df_disp = pd.DataFrame(data)
-    df_disp["Select"] = False # Default unchecked
+    df_disp["Select"] = False 
     
-    # Reorder columns
     df_disp = df_disp[["Select", "Party", "Balance", "Phone"]]
     
     edited_df = st.data_editor(
@@ -296,7 +311,6 @@ def screen_reminders():
         use_container_width=True
     )
     
-    # 4. Action Buttons for Selected
     selected_rows = edited_df[edited_df["Select"] == True]
     
     if not selected_rows.empty:
@@ -310,7 +324,6 @@ def screen_reminders():
             
             msg = f"Hello {p}, Your pending balance is Rs {b:,.0f}. Please pay soon."
             
-            # Link
             if ph:
                 clean_ph = re.sub(r'\D', '', str(ph))
                 if len(clean_ph) == 10: clean_ph = "91" + clean_ph
@@ -358,7 +371,6 @@ def screen_tools():
 
     with tab2:
         st.write("Find and Edit specific transactions.")
-        # ADDED SUPPLIER PAYMENTS HERE
         sheet_choice = st.selectbox("Sheet", ["CustomerDues", "PaymentsReceived", "PaymentsToSuppliers", "GoodsReceived"])
         f_party = st.selectbox("Filter by Party", ["All"] + get_all_party_names())
         c1, c2 = st.columns(2)
@@ -517,10 +529,17 @@ def screen_ledger():
     e = d2.date_input("To", st.session_state['l_e'])
     
     if st.button("🔎 Show Statement", type="primary") and sel_party:
+        # Fetch Sales/Rx (Customers)
         d_df = fetch_sheet_data("CustomerDues")
         p_df = fetch_sheet_data("PaymentsReceived")
         
+        # Fetch Purchase/SupplierPay (Suppliers)
+        goods_df = fetch_sheet_data("GoodsReceived")
+        supp_pay_df = fetch_sheet_data("PaymentsToSuppliers")
+        
         ledger = []
+        
+        # 1. Customer Transactions
         if not d_df.empty:
             sub = d_df[d_df['Party'].astype(str) == sel_party]
             for _, r in sub.iterrows():
@@ -533,13 +552,40 @@ def screen_ledger():
                 r_date = parse_date(str(r['Date']))
                 if r_date and s <= r_date <= e:
                     ledger.append({"Date": r_date, "Desc": f"Rx ({r.get('Mode','')})", "Dr": 0, "Cr": clean_amount(r['Amount'])})
+                    
+        # 2. Supplier Transactions (Reverse Logic: Purchase = Credit, Payment = Debit in Supplier Books)
+        # But for "My Ledger", Purchase is "I owe money" (Credit side if Liability?), 
+        # Actually simpler to keep format: Debit = I gave/sold, Credit = I got/bought?
+        # Standard: 
+        # Customer: Debit (Sale), Credit (Receipt).
+        # Supplier: Credit (Purchase), Debit (Payment).
+        
+        if not goods_df.empty:
+            sub = goods_df[goods_df['Supplier'].astype(str) == sel_party]
+            for _, r in sub.iterrows():
+                r_date = parse_date(str(r['Date']))
+                if r_date and s <= r_date <= e:
+                    # Purchase -> Credit (Liability increases)
+                    ledger.append({"Date": r_date, "Desc": f"Purchase ({r.get('Items','')})", "Dr": 0, "Cr": clean_amount(r['Amount'])})
+                    
+        if not supp_pay_df.empty:
+            sub = supp_pay_df[supp_pay_df['Supplier'].astype(str) == sel_party]
+            for _, r in sub.iterrows():
+                r_date = parse_date(str(r['Date']))
+                if r_date and s <= r_date <= e:
+                    # Payment to Supplier -> Debit (Liability decreases)
+                    ledger.append({"Date": r_date, "Desc": f"Paid Supplier ({r.get('Mode','')})", "Dr": clean_amount(r['Amount']), "Cr": 0})
         
         if ledger:
             df = pd.DataFrame(ledger).sort_values('Date')
             df.columns = ["Date", "Description", "Debit", "Credit"]
             bal = df['Debit'].sum() - df['Credit'].sum()
             st.dataframe(df, use_container_width=True)
-            st.metric("Net Balance", f"₹{abs(bal):,.2f}", "Receivable" if bal>0 else "Payable")
+            
+            # Logic: Positive = Receivable (Customer owes me), Negative = Payable (I owe Supplier)
+            status = "Receivable" if bal > 0 else "Payable"
+            st.metric("Net Balance", f"₹{abs(bal):,.2f}", status)
+            
             msg = f"Hello {sel_party}, Balance: {bal}"
             st.link_button("💬 WhatsApp", f"https://wa.me/?text={urllib.parse.quote(msg)}", use_container_width=True)
             pdf_bytes = generate_pdf(sel_party, df, s, e)
