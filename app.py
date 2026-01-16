@@ -94,7 +94,7 @@ def get_all_party_names():
         if not df.empty and "Party" in df.columns:
             names.update(df["Party"].astype(str).unique())
 
-    # 3. Suppliers (Purchases & Payments) - NEW FIX
+    # 3. Suppliers (Purchases & Payments)
     for sheet in ["GoodsReceived", "PaymentsToSuppliers"]:
         df = fetch_sheet_data(sheet)
         if not df.empty and "Supplier" in df.columns:
@@ -188,7 +188,6 @@ def go_to(page):
 # --- 5. SCREENS ---
 
 def screen_home():
-    # Fetch all data for Home Screen Metrics
     dues = fetch_sheet_data("CustomerDues")
     pymt = fetch_sheet_data("PaymentsReceived")
     supp_pay = fetch_sheet_data("PaymentsToSuppliers")
@@ -205,7 +204,6 @@ def screen_home():
         for p in all_cust:
             bal = sales.get(p, 0) - cols.get(p, 0)
             if bal > 0: total_receivable += bal
-            # If negative (advanced payment from customer), technically payable, but keeping simple
             
     # 2. Supplier Dues (Payable)
     if not goods.empty and not supp_pay.empty:
@@ -214,7 +212,7 @@ def screen_home():
         all_supp = purchases.index.union(paid_out.index)
         for s in all_supp:
             bal = purchases.get(s, 0) - paid_out.get(s, 0)
-            if bal > 0: total_payable += bal # I owe this much
+            if bal > 0: total_payable += bal 
 
     net_position = total_receivable - total_payable
     
@@ -228,7 +226,6 @@ def screen_home():
     
     st.markdown("---")
     
-    # MENU
     c1, c2, c3 = st.columns(3)
     if c1.button("📝\nEntry"): go_to('manual')
     if c2.button("📒\nLedger"): go_to('ledger')
@@ -243,19 +240,16 @@ def screen_reminders():
     st.markdown("### 🔔 Payment Reminders")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
     
-    # 1. Load Data
     with st.spinner("Calculating all balances..."):
         dues = fetch_sheet_data("CustomerDues")
         pymt = fetch_sheet_data("PaymentsReceived")
         master = fetch_sheet_data("Party_Master")
         
-        # Phone Map
         phones = {}
         if not master.empty:
             for _, r in master.iterrows():
                 phones[r["Name"]] = str(r.get("Phone", ""))
 
-        # Balances
         bals = {}
         if not dues.empty:
             for _, r in dues.iterrows():
@@ -266,13 +260,11 @@ def screen_reminders():
                 p = r["Party"]
                 bals[p] = bals.get(p, 0) - clean_amount(r["Amount"])
                 
-        # List of Dicts
         data = []
         for p, amt in bals.items():
-            if amt != 0: # Show ALL non-zero
+            if amt != 0: 
                 data.append({"Party": p, "Balance": amt, "Phone": phones.get(p, "")})
                 
-    # 2. Sorting Options
     st.write("Sort By:")
     s1, s2, s3, s4 = st.columns(4)
     sort_mode = st.session_state.get('sort_mode', 'High-Low')
@@ -282,7 +274,6 @@ def screen_reminders():
     if s3.button("A - Z"): st.session_state['sort_mode'] = 'A-Z'; st.rerun()
     if s4.button("Z - A"): st.session_state['sort_mode'] = 'Z-A'; st.rerun()
     
-    # Apply Sort
     if st.session_state.get('sort_mode') == 'High-Low':
         data.sort(key=lambda x: x['Balance'], reverse=True)
     elif st.session_state.get('sort_mode') == 'Low-High':
@@ -292,13 +283,11 @@ def screen_reminders():
     elif st.session_state.get('sort_mode') == 'Z-A':
         data.sort(key=lambda x: x['Party'], reverse=True)
 
-    # 3. Multi-Select Checkboxes
     st.markdown("---")
     st.write("Select parties to focus on:")
     
     df_disp = pd.DataFrame(data)
     df_disp["Select"] = False 
-    
     df_disp = df_disp[["Select", "Party", "Balance", "Phone"]]
     
     edited_df = st.data_editor(
@@ -316,12 +305,10 @@ def screen_reminders():
     if not selected_rows.empty:
         st.success(f"Selected {len(selected_rows)} parties.")
         st.write("👇 Click to WhatsApp each:")
-        
         for _, row in selected_rows.iterrows():
             p = row["Party"]
             b = row["Balance"]
             ph = row["Phone"]
-            
             msg = f"Hello {p}, Your pending balance is Rs {b:,.0f}. Please pay soon."
             
             if ph:
@@ -455,7 +442,9 @@ def screen_digitize_ledger():
         with st.form("save_hist"):
             scanned = data.get("PartyName", "")
             final_name = smart_match_party(scanned)
-            st.text_input("Party Name", value=final_name, disabled=True)
+            
+            # FIXED: Name is now editable (disabled=False by default)
+            final_name_edited = st.text_input("Party Name", value=final_name)
             
             c1, c2 = st.columns(2)
             op_bal = c1.number_input("Opening Balance", value=float(data.get("OpeningBalance", 0)))
@@ -469,12 +458,12 @@ def screen_digitize_ledger():
             if st.form_submit_button("Save"):
                 sh = get_sheet_object()
                 s_rows, p_rows = [], []
-                if op_bal > 0: s_rows.append([str(op_date), final_name, op_bal])
+                if op_bal > 0: s_rows.append([str(op_date), final_name_edited, op_bal])
                 for _, r in edited_df.iterrows():
                     d = r.get("Date", str(date.today()))
                     dr, cr = clean_amount(r.get("Debit", 0)), clean_amount(r.get("Credit", 0))
-                    if dr > 0: s_rows.append([d, final_name, dr])
-                    if cr > 0: p_rows.append([d, final_name, cr, "Old Ledger"])
+                    if dr > 0: s_rows.append([d, final_name_edited, dr])
+                    if cr > 0: p_rows.append([d, final_name_edited, cr, "Old Ledger"])
                 if s_rows: sh.worksheet("CustomerDues").append_rows(s_rows)
                 if p_rows: sh.worksheet("PaymentsReceived").append_rows(p_rows)
                 st.success("Saved!"); st.cache_data.clear(); del st.session_state['hist_data']
@@ -529,17 +518,13 @@ def screen_ledger():
     e = d2.date_input("To", st.session_state['l_e'])
     
     if st.button("🔎 Show Statement", type="primary") and sel_party:
-        # Fetch Sales/Rx (Customers)
         d_df = fetch_sheet_data("CustomerDues")
         p_df = fetch_sheet_data("PaymentsReceived")
-        
-        # Fetch Purchase/SupplierPay (Suppliers)
         goods_df = fetch_sheet_data("GoodsReceived")
         supp_pay_df = fetch_sheet_data("PaymentsToSuppliers")
         
         ledger = []
         
-        # 1. Customer Transactions
         if not d_df.empty:
             sub = d_df[d_df['Party'].astype(str) == sel_party]
             for _, r in sub.iterrows():
@@ -552,28 +537,17 @@ def screen_ledger():
                 r_date = parse_date(str(r['Date']))
                 if r_date and s <= r_date <= e:
                     ledger.append({"Date": r_date, "Desc": f"Rx ({r.get('Mode','')})", "Dr": 0, "Cr": clean_amount(r['Amount'])})
-                    
-        # 2. Supplier Transactions (Reverse Logic: Purchase = Credit, Payment = Debit in Supplier Books)
-        # But for "My Ledger", Purchase is "I owe money" (Credit side if Liability?), 
-        # Actually simpler to keep format: Debit = I gave/sold, Credit = I got/bought?
-        # Standard: 
-        # Customer: Debit (Sale), Credit (Receipt).
-        # Supplier: Credit (Purchase), Debit (Payment).
-        
         if not goods_df.empty:
             sub = goods_df[goods_df['Supplier'].astype(str) == sel_party]
             for _, r in sub.iterrows():
                 r_date = parse_date(str(r['Date']))
                 if r_date and s <= r_date <= e:
-                    # Purchase -> Credit (Liability increases)
                     ledger.append({"Date": r_date, "Desc": f"Purchase ({r.get('Items','')})", "Dr": 0, "Cr": clean_amount(r['Amount'])})
-                    
         if not supp_pay_df.empty:
             sub = supp_pay_df[supp_pay_df['Supplier'].astype(str) == sel_party]
             for _, r in sub.iterrows():
                 r_date = parse_date(str(r['Date']))
                 if r_date and s <= r_date <= e:
-                    # Payment to Supplier -> Debit (Liability decreases)
                     ledger.append({"Date": r_date, "Desc": f"Paid Supplier ({r.get('Mode','')})", "Dr": clean_amount(r['Amount']), "Cr": 0})
         
         if ledger:
@@ -581,11 +555,8 @@ def screen_ledger():
             df.columns = ["Date", "Description", "Debit", "Credit"]
             bal = df['Debit'].sum() - df['Credit'].sum()
             st.dataframe(df, use_container_width=True)
-            
-            # Logic: Positive = Receivable (Customer owes me), Negative = Payable (I owe Supplier)
             status = "Receivable" if bal > 0 else "Payable"
             st.metric("Net Balance", f"₹{abs(bal):,.2f}", status)
-            
             msg = f"Hello {sel_party}, Balance: {bal}"
             st.link_button("💬 WhatsApp", f"https://wa.me/?text={urllib.parse.quote(msg)}", use_container_width=True)
             pdf_bytes = generate_pdf(sel_party, df, s, e)
@@ -596,7 +567,6 @@ def screen_scan_daily():
     st.markdown("### 📸 Daily Scan")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
     img = st.file_uploader("Journal Page", type=['jpg', 'png'])
-    
     if img and st.button("Extract"):
         with st.spinner("AI Reading..."):
             data = run_daily_scan_extraction(img.read())
@@ -635,22 +605,15 @@ def screen_scan_daily():
             if st.form_submit_button("💾 Save All"):
                 sh = get_sheet_object()
                 dt = str(txn_date)
-                
                 rows = [[dt, r.get("Party"), clean_amount(r.get("Amount"))] for _, r in edited_sales.iterrows() if r.get("Party")]
                 if rows: sh.worksheet("CustomerDues").append_rows(rows)
-                
                 rows = [[dt, r.get("Party"), clean_amount(r.get("Amount")), r.get("Mode", "Cash")] for _, r in edited_pymt.iterrows() if r.get("Party")]
                 if rows: sh.worksheet("PaymentsReceived").append_rows(rows)
-                
                 rows = [[dt, r.get("Supplier"), clean_amount(r.get("Amount")), r.get("Mode", "Cash")] for _, r in edited_supp.iterrows() if r.get("Supplier")]
                 if rows: sh.worksheet("PaymentsToSuppliers").append_rows(rows)
-                
                 rows = [[dt, r.get("Supplier"), r.get("Items", ""), clean_amount(r.get("Amount"))] for _, r in edited_goods.iterrows() if r.get("Supplier")]
                 if rows: sh.worksheet("GoodsReceived").append_rows(rows)
-
-                st.success("Saved Successfully!")
-                del st.session_state['daily_data']
-                st.cache_data.clear()
+                st.success("Saved Successfully!"); del st.session_state['daily_data']; st.cache_data.clear()
 
 # --- MAIN ---
 if 'page' not in st.session_state: st.session_state['page'] = 'home'
