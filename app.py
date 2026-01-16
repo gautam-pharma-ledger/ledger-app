@@ -73,15 +73,24 @@ def fetch_sheet_data(sheet_name):
         return pd.DataFrame(data)
     except: return pd.DataFrame()
 
+def get_code_map():
+    """Returns { 'Raju': 'R1', 'Sun': 'S1' } dictionary"""
+    master = fetch_sheet_data("Party_Master")
+    code_map = {}
+    if not master.empty:
+        for _, r in master.iterrows():
+            name = str(r.get("Name", "")).strip()
+            code = str(r.get("Code", "")).strip()
+            if name and code:
+                code_map[name] = code
+    return code_map
+
 def generate_party_code(existing_codes, prefix="R"):
     """Generates R1, R2 or S1, S2 based on prefix"""
     max_num = 0
     for code in existing_codes:
-        # Check if code starts with the requested prefix (R or S)
-        # and has numbers after it
         code_str = str(code).strip()
         if code_str.startswith(prefix):
-            # Extract number part
             match = re.search(r'\d+', code_str)
             if match:
                 num = int(match.group())
@@ -92,9 +101,8 @@ def get_all_party_names_with_codes():
     """Returns list like ['Raju Pharma (R1)', 'Sun Pharma (S1)']"""
     names = set()
     master = fetch_sheet_data("Party_Master")
+    master_map = {} 
     
-    # 1. Get from Master
-    master_map = {} # Name -> Code
     if not master.empty:
         for _, r in master.iterrows():
             n = str(r["Name"]).strip()
@@ -102,28 +110,23 @@ def get_all_party_names_with_codes():
             names.add(n)
             master_map[n] = c
             
-    # 2. Get from Transactions (if missing in master)
     for sheet in ["CustomerDues", "PaymentsReceived", "GoodsReceived", "PaymentsToSuppliers"]:
         df = fetch_sheet_data(sheet)
         col = "Party" if "Party" in df.columns else "Supplier"
         if not df.empty and col in df.columns:
             names.update(df[col].astype(str).unique())
             
-    # Format List
     formatted_list = []
     sorted_names = sorted([n.strip() for n in list(names) if n.strip()])
     
     for n in sorted_names:
         code = master_map.get(n, "")
-        if code:
-            formatted_list.append(f"{n} ({code})")
-        else:
-            formatted_list.append(n)
+        if code: formatted_list.append(f"{n} ({code})")
+        else: formatted_list.append(n)
             
     return formatted_list
 
 def extract_name_from_string(party_str):
-    """Converts 'Raju Pharma (R1)' back to 'Raju Pharma'"""
     if "(" in party_str and ")" in party_str:
         return party_str.split(" (")[0].strip()
     return party_str.strip()
@@ -409,7 +412,7 @@ def screen_tools():
         new_rows = []
         current_codes = df_master["Code"].tolist()
         
-        # We need to know if they are R or S. Check sheets.
+        # Determine Type R/S
         cust_set = set()
         for s in ["CustomerDues", "PaymentsReceived"]:
             d = fetch_sheet_data(s)
@@ -417,7 +420,6 @@ def screen_tools():
             
         for name in all_raw:
             if name not in existing:
-                # Decide Prefix
                 prefix = "R" if name in cust_set else "S"
                 new_code = generate_party_code(current_codes, prefix)
                 current_codes.append(new_code)
@@ -460,10 +462,12 @@ def screen_digitize_ledger():
             scanned = data.get("PartyName", "")
             final = smart_match_party(scanned)
             
+            # Show code if exists
             all_w_code = get_all_party_names_with_codes()
             match_code = difflib.get_close_matches(final, all_w_code, n=1)
             display_val = match_code[0] if match_code else final
             
+            # Editable Name
             final_edited_display = st.text_input("Party Name (can edit)", value=display_val)
             final_raw = extract_name_from_string(final_edited_display)
             
@@ -488,7 +492,7 @@ def screen_digitize_ledger():
                 if s_rows: sh.worksheet("CustomerDues").append_rows(s_rows)
                 if p_rows: sh.worksheet("PaymentsReceived").append_rows(p_rows)
                 
-                # Check for new party code logic (R for Cust)
+                # Check for new party logic (Old Ledger = assume Customer -> R)
                 master = fetch_sheet_data("Party_Master")
                 if final_raw not in master["Name"].astype(str).values:
                     codes = master["Code"].tolist() if "Code" in master.columns else []
@@ -527,11 +531,10 @@ def screen_manual():
             if not party_final or amt == 0: st.error("Invalid Input"); st.stop()
             sh = get_sheet_object()
             
-            # New Party Creation
             if p_in == "Add New":
                 master = fetch_sheet_data("Party_Master")
                 codes = master["Code"].tolist() if "Code" in master.columns else []
-                # Determine R or S
+                # R/S Logic
                 prefix = "S" if e_type in ["Supplier Payment", "Purchase (Goods)"] else "R"
                 type_lbl = "Supplier" if prefix == "S" else "Customer"
                 new_code = generate_party_code(codes, prefix)
@@ -652,28 +655,28 @@ def screen_scan_daily():
                 sh = get_sheet_object()
                 dt = str(txn_date)
                 
-                # Helper to collect names and assign codes (R or S)
+                # Smart Code Generation for NEW parties found in Scan
                 master = fetch_sheet_data("Party_Master")
                 existing_raw = master["Name"].astype(str).tolist() if not master.empty else []
                 codes = master["Code"].tolist() if "Code" in master.columns else []
                 new_parties = []
                 
-                # Check Sales/Rx (R codes)
-                for df, prefix, col in [(edited_sales, "R", "Party"), (edited_pymt, "R", "Party")]:
-                    for p in df[col].astype(str).unique():
+                # 1. Check Sales/Rx (Retailers)
+                for df in [edited_sales, edited_pymt]:
+                    for p in df["Party"].astype(str).unique():
                         p_raw = extract_name_from_string(p)
                         if p_raw and p_raw not in existing_raw and p_raw != "nan":
-                            new_code = generate_party_code(codes, prefix)
+                            new_code = generate_party_code(codes, "R") # Force R
                             codes.append(new_code)
                             existing_raw.append(p_raw)
                             new_parties.append([p_raw, new_code, "Customer", "", ""])
 
-                # Check Supp/Goods (S codes)
-                for df, prefix, col in [(edited_supp, "S", "Supplier"), (edited_goods, "S", "Supplier")]:
+                # 2. Check Supp/Goods (Suppliers)
+                for df, col in [(edited_supp, "Supplier"), (edited_goods, "Supplier")]:
                     for p in df[col].astype(str).unique():
                         p_raw = extract_name_from_string(p)
                         if p_raw and p_raw not in existing_raw and p_raw != "nan":
-                            new_code = generate_party_code(codes, prefix)
+                            new_code = generate_party_code(codes, "S") # Force S
                             codes.append(new_code)
                             existing_raw.append(p_raw)
                             new_parties.append([p_raw, new_code, "Supplier", "", ""])
