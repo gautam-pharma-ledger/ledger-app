@@ -116,7 +116,7 @@ def show_splash_screen():
                     align-items: center;
                     height: 70vh;
                     flex-direction: column;
-                    animation: fadeOut 4s forwards; /* Animation lasts 4 seconds */
+                    animation: fadeOut 4s forwards;
                 }}
                 .splash-container img {{
                     width: 150px; 
@@ -134,45 +134,21 @@ def show_splash_screen():
                 @keyframes fadeOut {{
                     0% {{ opacity: 0; transform: scale(0.8); }}
                     15% {{ opacity: 1; transform: scale(1); }}
-                    85% {{ opacity: 1; transform: scale(1); }} /* Stays visible until 3.5 seconds */
+                    85% {{ opacity: 1; transform: scale(1); }} 
                     100% {{ opacity: 0; transform: scale(1.1); }}
                 }}
             </style>
             """, unsafe_allow_html=True)
-            time.sleep(4) # App waits 4 seconds
+            time.sleep(4)
         splash.empty()
         st.session_state["splash_shown"] = True
 
-# --- 2. PASSWORD PROTECTION ---
-def check_password():
-    """Returns `True` if the user had the correct password."""
-    def password_entered():
-        # FIX: Checks for Secret first. If missing, uses "Gautam123"
-        if "APP_PASSWORD" in st.secrets:
-            correct_password = st.secrets["APP_PASSWORD"]
-        else:
-            correct_password = "Gautam123"
-            
-        if st.session_state["password"] == correct_password:
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]
-        else:
-            st.session_state["password_correct"] = False
+# --- RUN SPLASH SCREEN DIRECTLY ---
+show_splash_screen()
 
-    if "password_correct" not in st.session_state:
-        show_splash_screen() # Show splash before login
-        st.text_input("Enter Password", type="password", on_change=password_entered, key="password")
-        return False
-    elif not st.session_state["password_correct"]:
-        st.text_input("Enter Password", type="password", on_change=password_entered, key="password")
-        st.error("😕 Password incorrect")
-        return False
-    else:
-        return True
+# (Password function deleted from here)
+# (Password check deleted from here)
 
-# STOP APP IF PASSWORD IS WRONG
-if not check_password():
-    st.stop()
 
 # --- 3. CONNECTION & UTILS ---
 @st.cache_resource
@@ -754,4 +730,5 @@ elif st.session_state['page'] == 'scan_historical': screen_digitize_ledger()
 elif st.session_state['page'] == 'scan_daily': screen_scan_daily()
 elif st.session_state['page'] == 'tools': screen_tools()
 elif st.session_state['page'] == 'reminders': screen_reminders()
+
 
