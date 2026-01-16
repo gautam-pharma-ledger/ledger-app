@@ -73,18 +73,6 @@ def fetch_sheet_data(sheet_name):
         return pd.DataFrame(data)
     except: return pd.DataFrame()
 
-def get_code_map():
-    """Returns { 'Raju': 'R1', 'Sun': 'S1' } dictionary"""
-    master = fetch_sheet_data("Party_Master")
-    code_map = {}
-    if not master.empty:
-        for _, r in master.iterrows():
-            name = str(r.get("Name", "")).strip()
-            code = str(r.get("Code", "")).strip()
-            if name and code:
-                code_map[name] = code
-    return code_map
-
 def generate_party_code(existing_codes, prefix="R"):
     """Generates R1, R2 or S1, S2 based on prefix"""
     max_num = 0
@@ -98,7 +86,6 @@ def generate_party_code(existing_codes, prefix="R"):
     return f"{prefix}{max_num + 1}"
 
 def get_all_party_names_with_codes():
-    """Returns list like ['Raju Pharma (R1)', 'Sun Pharma (S1)']"""
     names = set()
     master = fetch_sheet_data("Party_Master")
     master_map = {} 
@@ -172,7 +159,9 @@ def run_daily_scan_extraction(image_bytes):
         api_key = st.secrets["OPENAI_API_KEY"]
         client = OpenAI(api_key=api_key)
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
-        prompt = """Analyze daily journal page. Map to: CustomerDues, PaymentsReceived, GoodsReceived, PaymentsToSuppliers.
+        prompt = """Analyze daily journal page. 
+        1. Extract the Date written on the page.
+        2. Map entries to: CustomerDues (Sales), PaymentsReceived, GoodsReceived (Purchases), PaymentsToSuppliers.
         Return JSON: { "Date": "YYYY-MM-DD", 
         "CustomerDues": [{"Party": "Name", "Amount": 0}], 
         "PaymentsReceived": [{"Party": "Name", "Amount": 0, "Mode": "Cash"}], 
@@ -403,16 +392,13 @@ def screen_tools():
         df_master = fetch_sheet_data("Party_Master")
         if "Code" not in df_master.columns: df_master["Code"] = ""
         
-        # Merge missing parties
         all_raw = sorted(list(set([extract_name_from_string(p) for p in get_all_party_names_with_codes()])))
         if not df_master.empty: existing = df_master["Name"].astype(str).tolist()
         else: existing = []; df_master = pd.DataFrame(columns=["Name", "Code", "Type", "Phone", "Address"])
         
-        # Generate Codes Logic (NEW: R for Cust, S for Supplier)
         new_rows = []
         current_codes = df_master["Code"].tolist()
         
-        # Determine Type R/S
         cust_set = set()
         for s in ["CustomerDues", "PaymentsReceived"]:
             d = fetch_sheet_data(s)
@@ -462,12 +448,10 @@ def screen_digitize_ledger():
             scanned = data.get("PartyName", "")
             final = smart_match_party(scanned)
             
-            # Show code if exists
             all_w_code = get_all_party_names_with_codes()
             match_code = difflib.get_close_matches(final, all_w_code, n=1)
             display_val = match_code[0] if match_code else final
             
-            # Editable Name
             final_edited_display = st.text_input("Party Name (can edit)", value=display_val)
             final_raw = extract_name_from_string(final_edited_display)
             
@@ -492,7 +476,6 @@ def screen_digitize_ledger():
                 if s_rows: sh.worksheet("CustomerDues").append_rows(s_rows)
                 if p_rows: sh.worksheet("PaymentsReceived").append_rows(p_rows)
                 
-                # Check for new party logic (Old Ledger = assume Customer -> R)
                 master = fetch_sheet_data("Party_Master")
                 if final_raw not in master["Name"].astype(str).values:
                     codes = master["Code"].tolist() if "Code" in master.columns else []
@@ -534,7 +517,6 @@ def screen_manual():
             if p_in == "Add New":
                 master = fetch_sheet_data("Party_Master")
                 codes = master["Code"].tolist() if "Code" in master.columns else []
-                # R/S Logic
                 prefix = "S" if e_type in ["Supplier Payment", "Purchase (Goods)"] else "R"
                 type_lbl = "Supplier" if prefix == "S" else "Customer"
                 new_code = generate_party_code(codes, prefix)
@@ -623,19 +605,34 @@ def screen_scan_daily():
         data = st.session_state['daily_data']
         with st.form("daily_save"):
             st.write("### Review & Fix Data")
-            txn_date = st.date_input("Entry Date", date.today())
+            # AI DATE EXTRACT
+            ai_date = parse_date(data.get("Date")) or date.today()
+            txn_date = st.date_input("Entry Date", ai_date)
+            
+            # Helper to map names with codes for display
+            master = fetch_sheet_data("Party_Master")
+            code_map = {}
+            if not master.empty:
+                for _, r in master.iterrows():
+                    code_map[str(r["Name"]).strip()] = str(r.get("Code", "")).strip()
             
             # --- Sales ---
             st.markdown("#### 1. Sales")
             raw_sales = data.get("CustomerDues", [])
-            for r in raw_sales: r["Party"] = smart_match_party(r.get("Party",""))
+            for r in raw_sales: 
+                raw = smart_match_party(r.get("Party",""))
+                code = code_map.get(raw, "New")
+                r["Party"] = f"{raw} ({code})" if code != "New" else raw
             df_sales = pd.DataFrame(raw_sales) if raw_sales else pd.DataFrame(columns=["Party", "Amount"])
             edited_sales = st.data_editor(df_sales, num_rows="dynamic", key="s_ed")
             
             # --- Rx ---
             st.markdown("#### 2. Payments Rx")
             raw_pymt = data.get("PaymentsReceived", [])
-            for r in raw_pymt: r["Party"] = smart_match_party(r.get("Party",""))
+            for r in raw_pymt: 
+                raw = smart_match_party(r.get("Party",""))
+                code = code_map.get(raw, "New")
+                r["Party"] = f"{raw} ({code})" if code != "New" else raw
             df_pymt = pd.DataFrame(raw_pymt) if raw_pymt else pd.DataFrame(columns=["Party", "Amount", "Mode"])
             edited_pymt = st.data_editor(df_pymt, num_rows="dynamic", key="p_ed")
             
@@ -655,31 +652,36 @@ def screen_scan_daily():
                 sh = get_sheet_object()
                 dt = str(txn_date)
                 
-                # Smart Code Generation for NEW parties found in Scan
+                # Check for new parties and generate codes (R/S)
                 master = fetch_sheet_data("Party_Master")
                 existing_raw = master["Name"].astype(str).tolist() if not master.empty else []
                 codes = master["Code"].tolist() if "Code" in master.columns else []
                 new_parties = []
                 
-                # 1. Check Sales/Rx (Retailers)
-                for df in [edited_sales, edited_pymt]:
-                    for p in df["Party"].astype(str).unique():
-                        p_raw = extract_name_from_string(p)
-                        if p_raw and p_raw not in existing_raw and p_raw != "nan":
-                            new_code = generate_party_code(codes, "R") # Force R
-                            codes.append(new_code)
-                            existing_raw.append(p_raw)
-                            new_parties.append([p_raw, new_code, "Customer", "", ""])
-
-                # 2. Check Supp/Goods (Suppliers)
-                for df, col in [(edited_supp, "Supplier"), (edited_goods, "Supplier")]:
+                # Helper to collect unique names
+                all_new_names = set()
+                
+                # Retailers (Sales, Rx)
+                for df, prefix, col in [(edited_sales, "R", "Party"), (edited_pymt, "R", "Party")]:
                     for p in df[col].astype(str).unique():
                         p_raw = extract_name_from_string(p)
                         if p_raw and p_raw not in existing_raw and p_raw != "nan":
-                            new_code = generate_party_code(codes, "S") # Force S
-                            codes.append(new_code)
-                            existing_raw.append(p_raw)
-                            new_parties.append([p_raw, new_code, "Supplier", "", ""])
+                            if p_raw not in all_new_names:
+                                new_code = generate_party_code(codes, prefix)
+                                codes.append(new_code) # Prevent duplicate codes in one batch
+                                new_parties.append([p_raw, new_code, "Customer", "", ""])
+                                all_new_names.add(p_raw)
+
+                # Suppliers (Supp, Goods)
+                for df, prefix, col in [(edited_supp, "S", "Supplier"), (edited_goods, "S", "Supplier")]:
+                    for p in df[col].astype(str).unique():
+                        p_raw = extract_name_from_string(p)
+                        if p_raw and p_raw not in existing_raw and p_raw != "nan":
+                            if p_raw not in all_new_names:
+                                new_code = generate_party_code(codes, prefix)
+                                codes.append(new_code)
+                                new_parties.append([p_raw, new_code, "Supplier", "", ""])
+                                all_new_names.add(p_raw)
                             
                 if new_parties: sh.worksheet("Party_Master").append_rows(new_parties)
 
