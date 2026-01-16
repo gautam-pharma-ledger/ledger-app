@@ -73,11 +73,11 @@ def fetch_sheet_data(sheet_name):
         return pd.DataFrame(data)
     except: return pd.DataFrame()
 
-def generate_party_code(existing_codes, prefix="R"):
-    """Generates R1, R2 or S1, S2 based on prefix"""
+def get_next_code(current_codes, prefix):
+    """Finds next R10 or S5 based on existing list"""
     max_num = 0
-    for code in existing_codes:
-        code_str = str(code).strip()
+    for code in current_codes:
+        code_str = str(code).strip().upper()
         if code_str.startswith(prefix):
             match = re.search(r'\d+', code_str)
             if match:
@@ -85,38 +85,40 @@ def generate_party_code(existing_codes, prefix="R"):
                 if num > max_num: max_num = num
     return f"{prefix}{max_num + 1}"
 
-def get_all_party_names_with_codes():
-    names = set()
+def get_master_map():
+    """Returns {Name: Code} dictionary from Master"""
     master = fetch_sheet_data("Party_Master")
-    master_map = {} 
-    
+    mapping = {}
+    codes_list = []
     if not master.empty:
         for _, r in master.iterrows():
-            n = str(r["Name"]).strip()
-            c = str(r.get("Code", "")).strip()
-            names.add(n)
-            master_map[n] = c
-            
+            name = str(r.get("Name", "")).strip()
+            code = str(r.get("Code", "")).strip()
+            if name: mapping[name] = code
+            if code: codes_list.append(code)
+    return mapping, codes_list
+
+def get_all_party_names_display():
+    """Returns ['Raju (R1)', 'Sun (S1)'] for dropdowns"""
+    mapping, _ = get_master_map()
+    # Add names from transactions that might be missing in Master
     for sheet in ["CustomerDues", "PaymentsReceived", "GoodsReceived", "PaymentsToSuppliers"]:
         df = fetch_sheet_data(sheet)
         col = "Party" if "Party" in df.columns else "Supplier"
         if not df.empty and col in df.columns:
-            names.update(df[col].astype(str).unique())
-            
-    formatted_list = []
-    sorted_names = sorted([n.strip() for n in list(names) if n.strip()])
+            for name in df[col].unique():
+                if name not in mapping: mapping[name] = ""
     
-    for n in sorted_names:
-        code = master_map.get(n, "")
-        if code: formatted_list.append(f"{n} ({code})")
-        else: formatted_list.append(n)
-            
-    return formatted_list
+    display_list = []
+    for name in sorted(mapping.keys()):
+        code = mapping[name]
+        display_list.append(f"{name} ({code})" if code else name)
+    return display_list
 
-def extract_name_from_string(party_str):
-    if "(" in party_str and ")" in party_str:
-        return party_str.split(" (")[0].strip()
-    return party_str.strip()
+def extract_name_display(display_str):
+    if "(" in display_str and ")" in display_str:
+        return display_str.split(" (")[0].strip()
+    return display_str.strip()
 
 def clean_amount(val):
     try: return float(str(val).replace(",", "").replace("₹", "").replace("Rs", "").strip())
@@ -126,9 +128,8 @@ def parse_date(date_str):
     try: return pd.to_datetime(date_str).date()
     except: return None
 
-def smart_match_party(scanned_name):
-    raw_names = [extract_name_from_string(p) for p in get_all_party_names_with_codes()]
-    matches = difflib.get_close_matches(scanned_name, raw_names, n=1, cutoff=0.6)
+def smart_match_party(scanned_name, existing_names):
+    matches = difflib.get_close_matches(scanned_name, existing_names, n=1, cutoff=0.6)
     return matches[0] if matches else scanned_name
 
 # --- 2. AI HELPERS ---
@@ -255,14 +256,13 @@ def screen_reminders():
     with st.spinner("Analyzing..."):
         dues = fetch_sheet_data("CustomerDues")
         pymt = fetch_sheet_data("PaymentsReceived")
-        master = fetch_sheet_data("Party_Master")
         
+        mapping, _ = get_master_map() # {Name: Code}
         phones = {}
-        codes = {}
+        master = fetch_sheet_data("Party_Master")
         if not master.empty:
             for _, r in master.iterrows():
                 phones[r["Name"]] = str(r.get("Phone", ""))
-                codes[r["Name"]] = str(r.get("Code", ""))
 
         bals = {}
         if not dues.empty:
@@ -277,8 +277,9 @@ def screen_reminders():
         data = []
         for p, amt in bals.items():
             if amt != 0:
-                display_name = f"{p} ({codes.get(p, '')})" if p in codes and codes[p] else p
-                data.append({"Party": display_name, "RawName": p, "Balance": amt, "Phone": phones.get(p, "")})
+                code = mapping.get(p, "")
+                display = f"{p} ({code})" if code else p
+                data.append({"Party": display, "Balance": amt, "Phone": phones.get(p, "")})
                 
     st.write("Sort By:")
     s1, s2, s3, s4 = st.columns(4)
@@ -308,7 +309,7 @@ def screen_reminders():
         st.success(f"Selected {len(sel)} parties.")
         for _, row in sel.iterrows():
             p_display = row["Party"]
-            p_raw = extract_name_from_string(p_display)
+            p_raw = extract_name_display(p_display)
             b = row["Balance"]
             ph = row["Phone"]
             msg = f"Hello {p_raw}, Your pending balance is Rs {b:,.0f}. Please pay soon."
@@ -327,13 +328,13 @@ def screen_tools():
     
     with tab1:
         st.write("Combine two parties.")
-        parties = get_all_party_names_with_codes()
+        parties = get_all_party_names_display()
         c1, c2 = st.columns(2)
         old = c1.selectbox("Wrong Name", parties, index=None, placeholder="Search...")
         new = c2.selectbox("Correct Name", parties, index=None, placeholder="Search...")
         if st.button("Merge") and old and new:
-            old_raw = extract_name_from_string(old)
-            new_raw = extract_name_from_string(new)
+            old_raw = extract_name_display(old)
+            new_raw = extract_name_display(new)
             sh = get_sheet_object()
             count = 0
             for s in ["CustomerDues", "PaymentsReceived", "PaymentsToSuppliers", "GoodsReceived"]:
@@ -357,7 +358,8 @@ def screen_tools():
     with tab2:
         st.write("Edit transactions.")
         sheet = st.selectbox("Sheet", ["CustomerDues", "PaymentsReceived", "PaymentsToSuppliers", "GoodsReceived"])
-        raw_parties = [extract_name_from_string(p) for p in get_all_party_names_with_codes()]
+        # Use RAW names for filter
+        raw_parties = [extract_name_display(p) for p in get_all_party_names_display()]
         f_party = st.selectbox("Filter", ["All"] + sorted(list(set(raw_parties))))
         c1, c2 = st.columns(2)
         s_date = c1.date_input("Start", date.today().replace(day=1))
@@ -392,13 +394,14 @@ def screen_tools():
         df_master = fetch_sheet_data("Party_Master")
         if "Code" not in df_master.columns: df_master["Code"] = ""
         
-        all_raw = sorted(list(set([extract_name_from_string(p) for p in get_all_party_names_with_codes()])))
+        all_raw = sorted(list(set([extract_name_display(p) for p in get_all_party_names_display()])))
         if not df_master.empty: existing = df_master["Name"].astype(str).tolist()
         else: existing = []; df_master = pd.DataFrame(columns=["Name", "Code", "Type", "Phone", "Address"])
         
         new_rows = []
         current_codes = df_master["Code"].tolist()
         
+        # Helper to guess R or S based on usage
         cust_set = set()
         for s in ["CustomerDues", "PaymentsReceived"]:
             d = fetch_sheet_data(s)
@@ -407,7 +410,7 @@ def screen_tools():
         for name in all_raw:
             if name not in existing:
                 prefix = "R" if name in cust_set else "S"
-                new_code = generate_party_code(current_codes, prefix)
+                new_code = get_next_code(current_codes, prefix)
                 current_codes.append(new_code)
                 new_rows.append({"Name": name, "Code": new_code, "Type": "Customer" if prefix=="R" else "Supplier", "Phone": "", "Address": ""})
         
@@ -446,14 +449,22 @@ def screen_digitize_ledger():
         data = st.session_state['hist_data']
         with st.form("save_hist"):
             scanned = data.get("PartyName", "")
-            final = smart_match_party(scanned)
+            mapping, codes_list = get_master_map()
+            existing_names = list(mapping.keys())
             
-            all_w_code = get_all_party_names_with_codes()
-            match_code = difflib.get_close_matches(final, all_w_code, n=1)
-            display_val = match_code[0] if match_code else final
+            final_raw = smart_match_party(scanned, existing_names)
+            existing_code = mapping.get(final_raw, "")
             
-            final_edited_display = st.text_input("Party Name (can edit)", value=display_val)
-            final_raw = extract_name_from_string(final_edited_display)
+            # PRE-CALCULATE NEW CODE IF NEEDED (Default to R for Old Ledger)
+            if not existing_code:
+                new_code = get_next_code(codes_list, "R")
+                display_val = f"{final_raw} (New: {new_code})"
+            else:
+                display_val = f"{final_raw} ({existing_code})"
+                
+            # Editable Name Field
+            st.write("Party Name & Code:")
+            name_input = st.text_input("Edit Name (AI Guess)", value=display_val)
             
             c1, c2 = st.columns(2)
             op = c1.number_input("Opening Bal", value=float(data.get("OpeningBalance", 0)))
@@ -465,29 +476,40 @@ def screen_digitize_ledger():
             edited = st.data_editor(df, num_rows="dynamic")
             
             if st.form_submit_button("Save"):
+                # Parse the input to separate Name vs Code
+                # Expecting: "Name" or "Name (Code)"
+                if "(" in name_input:
+                    p_raw = name_input.split("(")[0].strip()
+                else:
+                    p_raw = name_input.strip()
+                
                 sh = get_sheet_object()
+                
+                # Update Master if New
+                if p_raw not in existing_names:
+                    # Recalculate code just in case
+                    master = fetch_sheet_data("Party_Master")
+                    curr_codes = master["Code"].tolist() if "Code" in master.columns else []
+                    final_code = get_next_code(curr_codes, "R")
+                    sh.worksheet("Party_Master").append_row([p_raw, final_code, "Customer", "", ""])
+                
+                # Save Transactions
                 s_rows, p_rows = [], []
-                if op > 0: s_rows.append([str(dt), final_raw, op])
+                if op > 0: s_rows.append([str(dt), p_raw, op])
                 for _, r in edited.iterrows():
                     d = r.get("Date", str(date.today()))
                     dr, cr = clean_amount(r.get("Debit", 0)), clean_amount(r.get("Credit", 0))
-                    if dr > 0: s_rows.append([d, final_raw, dr])
-                    if cr > 0: p_rows.append([d, final_raw, cr, "Old Ledger"])
+                    if dr > 0: s_rows.append([d, p_raw, dr])
+                    if cr > 0: p_rows.append([d, p_raw, cr, "Old Ledger"])
                 if s_rows: sh.worksheet("CustomerDues").append_rows(s_rows)
                 if p_rows: sh.worksheet("PaymentsReceived").append_rows(p_rows)
-                
-                master = fetch_sheet_data("Party_Master")
-                if final_raw not in master["Name"].astype(str).values:
-                    codes = master["Code"].tolist() if "Code" in master.columns else []
-                    new_code = generate_party_code(codes, "R")
-                    sh.worksheet("Party_Master").append_row([final_raw, new_code, "Customer", "", ""])
                 
                 st.success("Saved!"); st.cache_data.clear(); del st.session_state['hist_data']
 
 def screen_manual():
     st.markdown("### 📝 New Entry")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
-    parties_display = get_all_party_names_with_codes()
+    parties_display = get_all_party_names_display()
     
     with st.form("manual"):
         c1, c2 = st.columns(2)
@@ -502,7 +524,7 @@ def screen_manual():
             new_p_name = c3.text_input("New Name")
             party_final = new_p_name
         elif p_in:
-            party_final = extract_name_from_string(p_in)
+            party_final = extract_name_display(p_in)
         else: party_final = None
             
         amt = c4.number_input("Amount", min_value=0.0)
@@ -519,7 +541,7 @@ def screen_manual():
                 codes = master["Code"].tolist() if "Code" in master.columns else []
                 prefix = "S" if e_type in ["Supplier Payment", "Purchase (Goods)"] else "R"
                 type_lbl = "Supplier" if prefix == "S" else "Customer"
-                new_code = generate_party_code(codes, prefix)
+                new_code = get_next_code(codes, prefix)
                 sh.worksheet("Party_Master").append_row([party_final, new_code, type_lbl, "", ""])
                 st.toast(f"Created {type_lbl}: {party_final} ({new_code})")
 
@@ -534,8 +556,8 @@ def screen_manual():
 def screen_ledger():
     st.markdown("### 📒 Party Ledger")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
-    sel_display = st.selectbox("Party", get_all_party_names_with_codes(), index=None, placeholder="Search...")
-    sel_party = extract_name_from_string(sel_display) if sel_display else None
+    sel_display = st.selectbox("Party", get_all_party_names_display(), index=None, placeholder="Search...")
+    sel_party = extract_name_display(sel_display) if sel_display else None
     
     if 'l_s' not in st.session_state: st.session_state['l_s'] = date.today().replace(day=1)
     if 'l_e' not in st.session_state: st.session_state['l_e'] = date.today()
@@ -605,97 +627,95 @@ def screen_scan_daily():
         data = st.session_state['daily_data']
         with st.form("daily_save"):
             st.write("### Review & Fix Data")
-            # AI DATE EXTRACT
             ai_date = parse_date(data.get("Date")) or date.today()
             txn_date = st.date_input("Entry Date", ai_date)
             
-            # Helper to map names with codes for display
-            master = fetch_sheet_data("Party_Master")
-            code_map = {}
-            if not master.empty:
-                for _, r in master.iterrows():
-                    code_map[str(r["Name"]).strip()] = str(r.get("Code", "")).strip()
+            # --- PRE-CALCULATE CODES ---
+            mapping, codes_list = get_master_map()
+            existing_names = list(mapping.keys())
             
-            # --- Sales ---
-            st.markdown("#### 1. Sales")
-            raw_sales = data.get("CustomerDues", [])
-            for r in raw_sales: 
-                raw = smart_match_party(r.get("Party",""))
-                code = code_map.get(raw, "New")
-                r["Party"] = f"{raw} ({code})" if code != "New" else raw
-            df_sales = pd.DataFrame(raw_sales) if raw_sales else pd.DataFrame(columns=["Party", "Amount"])
-            edited_sales = st.data_editor(df_sales, num_rows="dynamic", key="s_ed")
+            # Helper to assign code for display in editor
+            def prepare_df_with_code(raw_data, col_name, prefix):
+                rows = []
+                # Find max num locally to handle multiple new parties in one batch
+                temp_codes = codes_list.copy()
+                
+                for r in raw_data:
+                    raw_name = smart_match_party(r.get(col_name,""), existing_names)
+                    
+                    if raw_name in mapping:
+                        code = mapping[raw_name]
+                    else:
+                        code = get_next_code(temp_codes, prefix)
+                        temp_codes.append(code) # Increment so next new party gets next code
+                    
+                    row = r.copy()
+                    row[col_name] = raw_name
+                    row["Code"] = code # New Column
+                    rows.append(row)
+                return pd.DataFrame(rows)
+
+            st.markdown("#### 1. Sales (Retailers - R)")
+            raw_s = data.get("CustomerDues", [])
+            df_s = prepare_df_with_code(raw_s, "Party", "R") if raw_s else pd.DataFrame(columns=["Party", "Code", "Amount"])
+            ed_s = st.data_editor(df_s, num_rows="dynamic", key="s_ed")
             
-            # --- Rx ---
-            st.markdown("#### 2. Payments Rx")
-            raw_pymt = data.get("PaymentsReceived", [])
-            for r in raw_pymt: 
-                raw = smart_match_party(r.get("Party",""))
-                code = code_map.get(raw, "New")
-                r["Party"] = f"{raw} ({code})" if code != "New" else raw
-            df_pymt = pd.DataFrame(raw_pymt) if raw_pymt else pd.DataFrame(columns=["Party", "Amount", "Mode"])
-            edited_pymt = st.data_editor(df_pymt, num_rows="dynamic", key="p_ed")
+            st.markdown("#### 2. Payments (Retailers - R)")
+            raw_p = data.get("PaymentsReceived", [])
+            df_p = prepare_df_with_code(raw_p, "Party", "R") if raw_p else pd.DataFrame(columns=["Party", "Code", "Amount", "Mode"])
+            ed_p = st.data_editor(df_p, num_rows="dynamic", key="p_ed")
             
-            # --- Supp ---
-            st.markdown("#### 3. Supplier Payments")
-            raw_supp = data.get("PaymentsToSuppliers", [])
-            df_supp = pd.DataFrame(raw_supp) if raw_supp else pd.DataFrame(columns=["Supplier", "Amount", "Mode"])
-            edited_supp = st.data_editor(df_supp, num_rows="dynamic", key="su_ed")
+            st.markdown("#### 3. Supplier Payments (Suppliers - S)")
+            raw_su = data.get("PaymentsToSuppliers", [])
+            df_su = prepare_df_with_code(raw_su, "Supplier", "S") if raw_su else pd.DataFrame(columns=["Supplier", "Code", "Amount", "Mode"])
+            ed_su = st.data_editor(df_su, num_rows="dynamic", key="su_ed")
             
-            # --- Goods ---
-            st.markdown("#### 4. Purchases")
-            raw_goods = data.get("GoodsReceived", [])
-            df_goods = pd.DataFrame(raw_goods) if raw_goods else pd.DataFrame(columns=["Supplier", "Items", "Amount"])
-            edited_goods = st.data_editor(df_goods, num_rows="dynamic", key="g_ed")
+            st.markdown("#### 4. Purchases (Suppliers - S)")
+            raw_g = data.get("GoodsReceived", [])
+            df_g = prepare_df_with_code(raw_g, "Supplier", "S") if raw_g else pd.DataFrame(columns=["Supplier", "Code", "Items", "Amount"])
+            ed_g = st.data_editor(df_g, num_rows="dynamic", key="g_ed")
 
             if st.form_submit_button("💾 Save All"):
                 sh = get_sheet_object()
                 dt = str(txn_date)
                 
-                # Check for new parties and generate codes (R/S)
-                master = fetch_sheet_data("Party_Master")
-                existing_raw = master["Name"].astype(str).tolist() if not master.empty else []
-                codes = master["Code"].tolist() if "Code" in master.columns else []
-                new_parties = []
+                # 1. Update Master List First
+                master_updates = []
+                seen_new_codes = set()
                 
-                # Helper to collect unique names
-                all_new_names = set()
+                # Check R Tables
+                for df in [ed_s, ed_p]:
+                    for _, r in df.iterrows():
+                        p, c = str(r["Party"]).strip(), str(r["Code"]).strip()
+                        if p and c and p not in mapping and c not in seen_new_codes:
+                            master_updates.append([p, c, "Customer", "", ""])
+                            seen_new_codes.add(c)
+                            mapping[p] = c # Prevent dupe adding
                 
-                # Retailers (Sales, Rx)
-                for df, prefix, col in [(edited_sales, "R", "Party"), (edited_pymt, "R", "Party")]:
-                    for p in df[col].astype(str).unique():
-                        p_raw = extract_name_from_string(p)
-                        if p_raw and p_raw not in existing_raw and p_raw != "nan":
-                            if p_raw not in all_new_names:
-                                new_code = generate_party_code(codes, prefix)
-                                codes.append(new_code) # Prevent duplicate codes in one batch
-                                new_parties.append([p_raw, new_code, "Customer", "", ""])
-                                all_new_names.add(p_raw)
+                # Check S Tables
+                for df, col in [(ed_su, "Supplier"), (ed_g, "Supplier")]:
+                    for _, r in df.iterrows():
+                        p, c = str(r[col]).strip(), str(r["Code"]).strip()
+                        if p and c and p not in mapping and c not in seen_new_codes:
+                            master_updates.append([p, c, "Supplier", "", ""])
+                            seen_new_codes.add(c)
+                            mapping[p] = c
 
-                # Suppliers (Supp, Goods)
-                for df, prefix, col in [(edited_supp, "S", "Supplier"), (edited_goods, "S", "Supplier")]:
-                    for p in df[col].astype(str).unique():
-                        p_raw = extract_name_from_string(p)
-                        if p_raw and p_raw not in existing_raw and p_raw != "nan":
-                            if p_raw not in all_new_names:
-                                new_code = generate_party_code(codes, prefix)
-                                codes.append(new_code)
-                                new_parties.append([p_raw, new_code, "Supplier", "", ""])
-                                all_new_names.add(p_raw)
-                            
-                if new_parties: sh.worksheet("Party_Master").append_rows(new_parties)
+                if master_updates:
+                    sh.worksheet("Party_Master").append_rows(master_updates)
+                    st.toast(f"✅ Added {len(master_updates)} new parties to Master List")
 
-                # Save Data
-                rows = [[dt, extract_name_from_string(r["Party"]), clean_amount(r["Amount"])] for _, r in edited_sales.iterrows() if r["Party"]]
+                # 2. Save Transactions
+                rows = [[dt, r["Party"], clean_amount(r["Amount"])] for _, r in ed_s.iterrows() if r["Party"]]
                 if rows: sh.worksheet("CustomerDues").append_rows(rows)
                 
-                rows = [[dt, extract_name_from_string(r["Party"]), clean_amount(r["Amount"]), r.get("Mode", "Cash")] for _, r in edited_pymt.iterrows() if r["Party"]]
+                rows = [[dt, r["Party"], clean_amount(r["Amount"]), r.get("Mode", "Cash")] for _, r in ed_p.iterrows() if r["Party"]]
                 if rows: sh.worksheet("PaymentsReceived").append_rows(rows)
                 
-                rows = [[dt, extract_name_from_string(r["Supplier"]), clean_amount(r["Amount"]), r.get("Mode", "Cash")] for _, r in edited_supp.iterrows() if r["Supplier"]]
+                rows = [[dt, r["Supplier"], clean_amount(r["Amount"]), r.get("Mode", "Cash")] for _, r in ed_su.iterrows() if r["Supplier"]]
                 if rows: sh.worksheet("PaymentsToSuppliers").append_rows(rows)
                 
-                rows = [[dt, extract_name_from_string(r["Supplier"]), r.get("Items", ""), clean_amount(r["Amount"])] for _, r in edited_goods.iterrows() if r["Supplier"]]
+                rows = [[dt, r["Supplier"], r.get("Items", ""), clean_amount(r["Amount"])] for _, r in ed_g.iterrows() if r["Supplier"]]
                 if rows: sh.worksheet("GoodsReceived").append_rows(rows)
 
                 st.success("Saved Successfully!"); del st.session_state['daily_data']; st.cache_data.clear()
