@@ -641,15 +641,20 @@ def screen_scan_daily():
                 temp_codes = codes_list.copy()
                 
                 for r in raw_data:
-                    raw_name = smart_match_party(r.get(col_name,""), existing_names)
+                    # Find name in list (checking "Party" and "Supplier" keys)
+                    raw_val = r.get("Party") or r.get("Supplier") or ""
+                    raw_name = smart_match_party(raw_val, existing_names)
                     
-                    if raw_name in mapping:
+                    # Logic: If exists but NO CODE -> Generate one
+                    if raw_name in mapping and mapping[raw_name]:
                         code = mapping[raw_name]
                     else:
+                        # New party OR Existing party with missing code
                         code = get_next_code(temp_codes, prefix)
                         temp_codes.append(code) # Increment so next new party gets next code
                     
                     row = r.copy()
+                    if col_name == "Supplier" and "Party" in row: del row["Party"] # clean key
                     row[col_name] = raw_name
                     row["Code"] = code # New Column
                     rows.append(row)
@@ -687,23 +692,29 @@ def screen_scan_daily():
                 for df in [ed_s, ed_p]:
                     for _, r in df.iterrows():
                         p, c = str(r["Party"]).strip(), str(r["Code"]).strip()
-                        if p and c and p not in mapping and c not in seen_new_codes:
-                            master_updates.append([p, c, "Customer", "", ""])
-                            seen_new_codes.add(c)
-                            mapping[p] = c # Prevent dupe adding
+                        # Add if: New Party OR Existing Party with no code previously
+                        if p and c:
+                            # If not in map OR map has empty code
+                            if (p not in mapping) or (p in mapping and not mapping[p]):
+                                if c not in seen_new_codes:
+                                    master_updates.append([p, c, "Customer", "", ""])
+                                    seen_new_codes.add(c)
+                                    mapping[p] = c # Prevent dupe adding
                 
                 # Check S Tables
                 for df, col in [(ed_su, "Supplier"), (ed_g, "Supplier")]:
                     for _, r in df.iterrows():
                         p, c = str(r[col]).strip(), str(r["Code"]).strip()
-                        if p and c and p not in mapping and c not in seen_new_codes:
-                            master_updates.append([p, c, "Supplier", "", ""])
-                            seen_new_codes.add(c)
-                            mapping[p] = c
+                        if p and c:
+                            if (p not in mapping) or (p in mapping and not mapping[p]):
+                                if c not in seen_new_codes:
+                                    master_updates.append([p, c, "Supplier", "", ""])
+                                    seen_new_codes.add(c)
+                                    mapping[p] = c
 
                 if master_updates:
                     sh.worksheet("Party_Master").append_rows(master_updates)
-                    st.toast(f"✅ Added {len(master_updates)} new parties to Master List")
+                    st.toast(f"✅ Added {len(master_updates)} new parties/codes to Master List")
 
                 # 2. Save Transactions
                 rows = [[dt, r["Party"], clean_amount(r["Amount"])] for _, r in ed_s.iterrows() if r["Party"]]
