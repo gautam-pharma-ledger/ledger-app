@@ -540,6 +540,7 @@ def screen_digitize_ledger():
             scanned = data.get("PartyName", "")
             mapping, codes_list = get_master_map()
             existing_names = list(mapping.keys())
+            
             final_raw = smart_match_party(scanned, existing_names)
             existing_code = mapping.get(final_raw, "")
             
@@ -554,31 +555,72 @@ def screen_digitize_ledger():
             
             c1, c2 = st.columns(2)
             op = c1.number_input("Opening Bal", value=float(data.get("OpeningBalance", 0)))
-            dt = c2.date_input("Date", date.today().replace(month=4, day=1))
+            dt = c2.date_input("Date (Opening Bal)", date.today().replace(month=4, day=1))
             
+            # --- PREPARE TABLE ---
             df = pd.DataFrame(data.get("Transactions", []))
             for c in ["Date", "Particulars", "Debit", "Credit"]: 
                 if c not in df.columns: df[c] = ""
-            edited = st.data_editor(df, num_rows="dynamic")
+            
+            # FORCE ALL COLUMNS TO STRING/NUMBER TO PREVENT ERRORS
+            df["Date"] = df["Date"].astype(str)
+            df["Particulars"] = df["Particulars"].astype(str)
+            df["Debit"] = df["Debit"].apply(clean_amount)
+            df["Credit"] = df["Credit"].apply(clean_amount)
+
+            st.write("### ✏️ Edit Transactions (DD/MM/YYYY)")
+            edited = st.data_editor(
+                df, 
+                num_rows="dynamic",
+                use_container_width=True,
+                column_config={
+                    "Date": st.column_config.TextColumn("Date (DD/MM/YYYY)", help="Type strictly as DD/MM/YYYY"),
+                    "Particulars": st.column_config.TextColumn("Particulars"),
+                    "Debit": st.column_config.NumberColumn("Debit", min_value=0, format="₹%.2f"),
+                    "Credit": st.column_config.NumberColumn("Credit", min_value=0, format="₹%.2f")
+                }
+            )
             
             if st.form_submit_button("Save"):
-                if "(" in name_input: p_raw = name_input.split("(")[0].strip()
-                else: p_raw = name_input.strip()
+                if "(" in name_input:
+                    p_raw = name_input.split("(")[0].strip()
+                else:
+                    p_raw = name_input.strip()
+                
                 sh = get_sheet_object()
+                
+                # Update Master if New
                 if p_raw not in existing_names:
                     master = fetch_sheet_data("Party_Master")
                     curr_codes = master["Code"].tolist() if "Code" in master.columns else []
                     final_code = get_next_code(curr_codes, "R")
                     sh.worksheet("Party_Master").append_row([p_raw, final_code, "Customer", "", ""])
+                
+                # Save Transactions with Date Fix
                 s_rows, p_rows = [], []
+                
+                # Helper to convert DD/MM/YYYY -> YYYY-MM-DD
+                def fix_date(d_str):
+                    try:
+                        # dayfirst=True tells it that 01/02 is 1st Feb, not 2nd Jan
+                        return pd.to_datetime(d_str, dayfirst=True).strftime("%Y-%m-%d")
+                    except:
+                        return str(date.today())
+
                 if op > 0: s_rows.append([str(dt), p_raw, op])
+                
                 for _, r in edited.iterrows():
-                    d = r.get("Date", str(date.today()))
+                    raw_date = str(r.get("Date", ""))
+                    final_date = fix_date(raw_date)
+                    
                     dr, cr = clean_amount(r.get("Debit", 0)), clean_amount(r.get("Credit", 0))
-                    if dr > 0: s_rows.append([d, p_raw, dr])
-                    if cr > 0: p_rows.append([d, p_raw, cr, "Old Ledger"])
+                    
+                    if dr > 0: s_rows.append([final_date, p_raw, dr])
+                    if cr > 0: p_rows.append([final_date, p_raw, cr, "Old Ledger"])
+                
                 if s_rows: sh.worksheet("CustomerDues").append_rows(s_rows)
                 if p_rows: sh.worksheet("PaymentsReceived").append_rows(p_rows)
+                
                 st.success("Saved!"); st.cache_data.clear(); del st.session_state['hist_data']
 
 def screen_manual():
@@ -797,6 +839,7 @@ elif st.session_state['page'] == 'scan_historical': screen_digitize_ledger()
 elif st.session_state['page'] == 'scan_daily': screen_scan_daily()
 elif st.session_state['page'] == 'tools': screen_tools()
 elif st.session_state['page'] == 'reminders': screen_reminders()
+
 
 
 
