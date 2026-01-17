@@ -623,6 +623,73 @@ def screen_manual():
                 st.success("Saved!"); st.cache_data.clear()
             except Exception as e: st.error(str(e))
 
+def screen_ledger():
+    st.markdown("### 📒 Party Ledger")
+    if st.button("🏠 Home", use_container_width=True): go_to('home')
+    sel_display = st.selectbox("Party", get_all_party_names_display(), index=None, placeholder="Search...")
+    sel_party = extract_name_display(sel_display) if sel_display else None
+    
+    if 'l_s' not in st.session_state: st.session_state['l_s'] = date.today().replace(day=1)
+    if 'l_e' not in st.session_state: st.session_state['l_e'] = date.today()
+    
+    c1, c2, c3 = st.columns(3)
+    if c1.button("This Month"): st.session_state['l_s'] = date.today().replace(day=1); st.session_state['l_e'] = date.today(); st.rerun()
+    if c2.button("Last Month"): 
+        first = (date.today().replace(day=1) - timedelta(days=1)).replace(day=1)
+        st.session_state['l_s'] = first; st.session_state['l_e'] = date.today().replace(day=1) - timedelta(days=1); st.rerun()
+    if c3.button("All Time"): st.session_state['l_s'] = date(2023,1,1); st.session_state['l_e'] = date.today(); st.rerun()
+
+    d1, d2 = st.columns(2)
+    s = d1.date_input("From", st.session_state['l_s'])
+    e = d2.date_input("To", st.session_state['l_e'])
+    
+    if st.button("🔎 Show Statement", type="primary") and sel_party:
+        d_df = fetch_sheet_data("CustomerDues")
+        p_df = fetch_sheet_data("PaymentsReceived")
+        goods_df = fetch_sheet_data("GoodsReceived")
+        supp_pay_df = fetch_sheet_data("PaymentsToSuppliers")
+        
+        ledger = []
+        if not d_df.empty:
+            sub = d_df[d_df['Party'].astype(str) == sel_party]
+            for _, r in sub.iterrows():
+                r_date = parse_date(str(r['Date']))
+                if r_date and s <= r_date <= e: ledger.append({"Date": r_date, "Desc": "Sale", "Dr": clean_amount(r['Amount']), "Cr": 0})
+        if not p_df.empty:
+            sub = p_df[p_df['Party'].astype(str) == sel_party]
+            for _, r in sub.iterrows():
+                r_date = parse_date(str(r['Date']))
+                if r_date and s <= r_date <= e: ledger.append({"Date": r_date, "Desc": f"Rx ({r.get('Mode','')})", "Dr": 0, "Cr": clean_amount(r['Amount'])})
+        if not goods_df.empty:
+            sub = goods_df[goods_df['Supplier'].astype(str) == sel_party]
+            for _, r in sub.iterrows():
+                r_date = parse_date(str(r['Date']))
+                if r_date and s <= r_date <= e: ledger.append({"Date": r_date, "Desc": f"Purchase ({r.get('Items','')})", "Dr": 0, "Cr": clean_amount(r['Amount'])})
+        if not supp_pay_df.empty:
+            sub = supp_pay_df[supp_pay_df['Supplier'].astype(str) == sel_party]
+            for _, r in sub.iterrows():
+                r_date = parse_date(str(r['Date']))
+                if r_date and s <= r_date <= e: ledger.append({"Date": r_date, "Desc": f"Paid Supplier ({r.get('Mode','')})", "Dr": clean_amount(r['Amount']), "Cr": 0})
+        
+        if ledger:
+            df = pd.DataFrame(ledger).sort_values('Date')
+            df.columns = ["Date", "Description", "Debit", "Credit"]
+            bal = df['Debit'].sum() - df['Credit'].sum()
+            st.dataframe(df, use_container_width=True)
+            status = "Receivable" if bal > 0 else "Payable"
+            st.metric("Net Balance", f"₹{abs(bal):,.2f}", status)
+            
+            # PDF Generation
+            pdf_bytes = generate_pdf(sel_party, df, s, e)
+            st.download_button("📄 PDF Statement", pdf_bytes, "stmt.pdf", "application/pdf", use_container_width=True)
+            
+            # SMS Link (Updated for Direct SMS)
+            msg = f"Hello {sel_party}, Balance: {bal}"
+            enc_msg = urllib.parse.quote(msg)
+            st.link_button("💬 Send SMS", f"sms:?body={enc_msg}", use_container_width=True)
+
+        else: st.info("No Transactions Found.")
+
 def screen_scan_daily():
     st.markdown("### 📸 Daily Scan")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
@@ -730,5 +797,6 @@ elif st.session_state['page'] == 'scan_historical': screen_digitize_ledger()
 elif st.session_state['page'] == 'scan_daily': screen_scan_daily()
 elif st.session_state['page'] == 'tools': screen_tools()
 elif st.session_state['page'] == 'reminders': screen_reminders()
+
 
 
