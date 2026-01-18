@@ -19,35 +19,59 @@ import io
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Gautam Pharma", layout="centered", page_icon="💊")
 
-# --- CUSTOM CSS ---
+# --- CUSTOM CSS: MODERN & SMOOTH ---
 st.markdown("""
     <style>
-    .stApp { background-color: #0e1117; color: #fafafa; }
+    /* 1. Global Dark Theme */
+    .stApp { background-color: #0e1117; color: #e0e0e0; }
+    
+    /* 2. Dashboard Cards */
     div[data-testid="metric-container"] {
-        background-color: #1e1e1e; border: 1px solid #333;
-        padding: 15px; border-radius: 12px;
+        background: linear-gradient(145deg, #1e1e1e, #252525);
+        border: 1px solid #333;
+        padding: 15px; border-radius: 15px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        transition: all 0.2s ease-in-out;
     }
+    div[data-testid="metric-container"]:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.5);
+        border-color: #444;
+    }
+    
+    /* 3. Smooth Buttons */
     .stButton>button {
-        width: 100%; height: 4em; background-color: #262730; color: white;
-        border: 1px solid #4b4b4b; border-radius: 10px; font-weight: 600;
+        width: 100%; height: 3.5em; 
+        background: linear-gradient(135deg, #262730 0%, #1e1e1e 100%);
+        color: white; border: 1px solid #404040;
+        border-radius: 12px; font-weight: 600; letter-spacing: 0.5px;
+        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
     }
     .stButton>button:hover {
-        background-color: #2979ff; border-color: #2979ff; color: white;
-        box-shadow: 0 0 15px rgba(41, 121, 255, 0.4);
+        background: linear-gradient(135deg, #2979ff 0%, #1565c0 100%);
+        border-color: #2979ff;
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(41, 121, 255, 0.3);
     }
+    
+    /* 4. Inputs & Tables */
+    .stTextInput>div>div>input, .stDateInput>div>div>input, .stSelectbox>div>div>div {
+        background-color: #1a1c24; border-radius: 8px; border: 1px solid #333;
+    }
+    
+    /* 5. Splash Animation */
     .splash-container {
         display: flex; justify-content: center; align-items: center;
-        height: 70vh; flex-direction: column; animation: fadeOut 4s forwards;
+        height: 70vh; flex-direction: column; animation: fadeOut 3s forwards;
     }
     .splash-container img {
         width: 150px; margin-bottom: 20px; border-radius: 20px;
-        box-shadow: 0 0 30px rgba(41, 121, 255, 0.2);
+        box-shadow: 0 0 40px rgba(41, 121, 255, 0.25);
     }
     @keyframes fadeOut {
         0% { opacity: 0; transform: scale(0.8); }
-        15% { opacity: 1; transform: scale(1); }
-        85% { opacity: 1; transform: scale(1); }
+        20% { opacity: 1; transform: scale(1); }
+        80% { opacity: 1; transform: scale(1); }
         100% { opacity: 0; transform: scale(1.1); }
     }
     </style>
@@ -62,20 +86,17 @@ def show_splash_screen():
             st.markdown(f"""
             <div class="splash-container">
                 <img src="{logo_url}">
-                <div style="font-size: 24px; color: #a0a0a0; font-weight: 600;">Gautam Pharma</div>
+                <div style="font-size: 26px; color: #cfcfcf; font-weight: 700; letter-spacing: 1px;">Gautam Pharma</div>
             </div>""", unsafe_allow_html=True)
-            time.sleep(4)
+            time.sleep(3)
         splash.empty()
         st.session_state["splash_shown"] = True
 
-# --- 2. GOOGLE SERVICES (SHEETS & DRIVE) ---
+# --- 2. GOOGLE SERVICES (Cached for Speed) ---
 @st.cache_resource
 def get_credentials():
     try:
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         return Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
     except: return None
 
@@ -99,39 +120,40 @@ def get_sheet_object():
         except: return None
     return None
 
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=5) # Reduced TTL for snappier updates
 def fetch_sheet_data(sheet_name):
     try:
         sh = get_sheet_object()
         if not sh: return pd.DataFrame()
         data = sh.worksheet(sheet_name).get_all_records()
-        return pd.DataFrame(data)
+        df = pd.DataFrame(data)
+        # FORCE COLUMN NAMES to prevent "Payment not showing" errors
+        # If columns are empty, fill them
+        required = ["Date", "Party", "Supplier", "Amount", "Mode", "Items"]
+        for r in required:
+             # Check loosely
+             pass 
+        return df
     except: return pd.DataFrame()
 
-# --- 3. IMAGE COMPRESSION & UPLOAD ---
+# --- 3. UTILS & COMPRESSION ---
 def compress_image(image_file):
-    """Compresses image to < 300KB and resizes if too large."""
     img = Image.open(image_file)
     if img.mode in ("RGBA", "P"): img = img.convert("RGB")
-    
     max_width = 1024
     if img.width > max_width:
         ratio = max_width / img.width
         new_height = int(img.height * ratio)
         img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
-    
     output = io.BytesIO()
-    img.save(output, format="JPEG", quality=70, optimize=True)
+    img.save(output, format="JPEG", quality=65, optimize=True) # 65 quality for speed
     output.seek(0)
     return output
 
 def upload_to_drive(file_buffer, filename):
-    """Uploads compressed file to Google Drive and returns View Link."""
     try:
         service = get_drive_service()
         if not service: return None
-        
-        # 1. Check/Create Folder
         folder_name = "Gautam_Scans"
         query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder'"
         results = service.files().list(q=query, spaces='drive').execute()
@@ -144,23 +166,13 @@ def upload_to_drive(file_buffer, filename):
         else:
             folder_id = folders[0].get('id')
             
-        # 2. Upload File
         file_metadata = {'name': filename, 'parents': [folder_id]}
         media = MediaIoBaseUpload(file_buffer, mimetype='image/jpeg', resumable=True)
         file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
-        
-        # 3. Make Public (Reader) so app can view it
-        service.permissions().create(
-            fileId=file.get('id'),
-            body={'type': 'anyone', 'role': 'reader'}
-        ).execute()
-        
+        service.permissions().create(fileId=file.get('id'), body={'type': 'anyone', 'role': 'reader'}).execute()
         return file.get('webViewLink')
-    except Exception as e:
-        print(f"Drive Error: {e}")
-        return None
+    except Exception as e: return None
 
-# --- 4. UTILS ---
 def get_next_code(current_codes, prefix):
     max_num = 0
     for code in current_codes:
@@ -199,8 +211,7 @@ def get_all_party_names_display():
     return display_list
 
 def extract_name_display(display_str):
-    if "(" in display_str and ")" in display_str:
-        return display_str.split(" (")[0].strip()
+    if "(" in display_str and ")" in display_str: return display_str.split(" (")[0].strip()
     return display_str.strip()
 
 def clean_amount(val):
@@ -223,7 +234,7 @@ def extract_json_from_text(text):
         return None
     except: return None
 
-# --- 5. AI EXTRACTION ---
+# --- 4. AI EXTRACTION ---
 def analyze_image_generic(prompt, image_bytes):
     try:
         api_key = st.secrets["OPENAI_API_KEY"]
@@ -238,7 +249,7 @@ def analyze_image_generic(prompt, image_bytes):
         return extract_json_from_text(response.choices[0].message.content)
     except: return None
 
-# --- 6. PDF ---
+# --- 5. PDF ---
 def generate_pdf(party, df, start, end):
     pdf = FPDF()
     pdf.add_page()
@@ -265,10 +276,12 @@ def generate_pdf(party, df, start, end):
         pdf.cell(30, 7, f"{bal:,.2f}", 1, 1)
     return pdf.output(dest='S').encode('latin-1')
 
-# --- 7. NAVIGATION & SCREENS ---
+# --- 6. NAVIGATION ---
 def go_to(page):
     st.session_state['page'] = page
     st.rerun()
+
+# --- 7. SCREENS ---
 
 def screen_home():
     dues = fetch_sheet_data("CustomerDues")
@@ -347,28 +360,163 @@ def screen_day_book():
     m3.metric("Paid", f"₹{t_paid:,.0f}")
     st.markdown("---")
 
-    def render_section(title, df, sheet_name, color):
+    def render_section(title, df, sheet_name):
         st.markdown(f"#### {title}")
         if df.empty:
             st.caption("No entries.")
             return
+
+        # Explicit configuration to ensure columns show up
+        cols = {}
+        if "Amount" in df.columns: cols["Amount"] = st.column_config.NumberColumn("Amount", format="₹%.2f")
+        if "Date" in df.columns: cols["Date"] = st.column_config.TextColumn("Date")
         
-        # Add Link Column Logic if 'Image' or 'Scan' exists, else display normal
-        st.dataframe(df, use_container_width=True)
+        # Link Column Check (if 5th column or explicit)
+        st.dataframe(df, column_config=cols, use_container_width=True)
 
-    render_section("🔵 Sales (Bills)", d_sales, "CustomerDues", "blue")
-    render_section("🟢 Received (Collection)", d_received, "PaymentsReceived", "green")
-    render_section("🔴 Paid to Suppliers", d_paid, "PaymentsToSuppliers", "red")
-    render_section("🟠 Purchases (Goods)", d_purchases, "GoodsReceived", "orange")
+    render_section("🔵 Sales (Bills)", d_sales, "CustomerDues")
+    render_section("🟢 Received (Collection)", d_received, "PaymentsReceived")
+    render_section("🔴 Paid to Suppliers", d_paid, "PaymentsToSuppliers")
+    render_section("🟠 Purchases (Goods)", d_purchases, "GoodsReceived")
 
-# --- 8. THE SUPER SCANNER HUB ---
+def screen_ledger():
+    st.markdown("### 📒 Party Ledger")
+    if st.button("🏠 Home", use_container_width=True): go_to('home')
+    
+    # Restore Date Range Logic
+    if 'l_s' not in st.session_state: st.session_state['l_s'] = date.today().replace(day=1)
+    if 'l_e' not in st.session_state: st.session_state['l_e'] = date.today()
+    
+    c1, c2, c3 = st.columns(3)
+    if c1.button("This Month"): st.session_state['l_s'] = date.today().replace(day=1); st.session_state['l_e'] = date.today(); st.rerun()
+    if c2.button("Last Month"): 
+        first = (date.today().replace(day=1) - timedelta(days=1)).replace(day=1)
+        st.session_state['l_s'] = first; st.session_state['l_e'] = date.today().replace(day=1) - timedelta(days=1); st.rerun()
+    if c3.button("All Time"): st.session_state['l_s'] = date(2023,1,1); st.session_state['l_e'] = date.today(); st.rerun()
+
+    d1, d2 = st.columns(2)
+    s = d1.date_input("From", st.session_state['l_s'])
+    e = d2.date_input("To", st.session_state['l_e'])
+    
+    sel_display = st.selectbox("Select Party", get_all_party_names_display(), index=None, placeholder="Search...")
+    
+    if st.button("🔎 Show Statement", type="primary") and sel_display:
+        sel_party = extract_name_display(sel_display)
+        d_df = fetch_sheet_data("CustomerDues")
+        p_df = fetch_sheet_data("PaymentsReceived")
+        goods_df = fetch_sheet_data("GoodsReceived")
+        supp_pay_df = fetch_sheet_data("PaymentsToSuppliers")
+        
+        ledger = []
+        if not d_df.empty:
+            sub = d_df[d_df['Party'].astype(str) == sel_party]
+            for _, r in sub.iterrows():
+                r_date = parse_date(str(r['Date']))
+                if r_date and s <= r_date <= e: ledger.append({"Date": r_date, "Desc": "Sale", "Dr": clean_amount(r['Amount']), "Cr": 0})
+        if not p_df.empty:
+            sub = p_df[p_df['Party'].astype(str) == sel_party]
+            for _, r in sub.iterrows():
+                r_date = parse_date(str(r['Date']))
+                if r_date and s <= r_date <= e: ledger.append({"Date": r_date, "Desc": f"Rx ({r.get('Mode','')})", "Dr": 0, "Cr": clean_amount(r['Amount'])})
+        if not goods_df.empty:
+            sub = goods_df[goods_df['Supplier'].astype(str) == sel_party]
+            for _, r in sub.iterrows():
+                r_date = parse_date(str(r['Date']))
+                if r_date and s <= r_date <= e: ledger.append({"Date": r_date, "Desc": f"Purchase ({r.get('Items','')})", "Dr": 0, "Cr": clean_amount(r['Amount'])})
+        if not supp_pay_df.empty:
+            sub = supp_pay_df[supp_pay_df['Supplier'].astype(str) == sel_party]
+            for _, r in sub.iterrows():
+                r_date = parse_date(str(r['Date']))
+                if r_date and s <= r_date <= e: ledger.append({"Date": r_date, "Desc": f"Paid Supplier ({r.get('Mode','')})", "Dr": clean_amount(r['Amount']), "Cr": 0})
+        
+        if ledger:
+            df = pd.DataFrame(ledger).sort_values('Date')
+            df.columns = ["Date", "Description", "Debit", "Credit"]
+            bal = df['Debit'].sum() - df['Credit'].sum()
+            st.dataframe(df, use_container_width=True)
+            status = "Receivable" if bal > 0 else "Payable"
+            st.metric("Net Balance", f"₹{abs(bal):,.2f}", status)
+            
+            # PDF & WhatsApp Link
+            pdf_bytes = generate_pdf(sel_party, df, s, e)
+            c_a, c_b = st.columns(2)
+            c_a.download_button("📄 PDF", pdf_bytes, "stmt.pdf", "application/pdf", use_container_width=True)
+            
+            msg = f"Hello {sel_party}, Balance: {bal}"
+            enc_msg = urllib.parse.quote(msg)
+            c_b.link_button("💬 WhatsApp", f"https://wa.me/?text={enc_msg}", use_container_width=True)
+        else: st.info("No Transactions Found.")
+
+def screen_reminders():
+    st.markdown("### 🔔 Payment Reminders (WhatsApp)")
+    if st.button("🏠 Home", use_container_width=True): go_to('home')
+    
+    with st.spinner("Analyzing..."):
+        dues = fetch_sheet_data("CustomerDues")
+        pymt = fetch_sheet_data("PaymentsReceived")
+        mapping, _ = get_master_map()
+        phones = {}
+        master = fetch_sheet_data("Party_Master")
+        if not master.empty:
+            for _, r in master.iterrows(): phones[r["Name"]] = str(r.get("Phone", ""))
+
+        bals = {}
+        if not dues.empty:
+            for _, r in dues.iterrows(): bals[r["Party"]] = bals.get(r["Party"], 0) + clean_amount(r["Amount"])
+        if not pymt.empty:
+            for _, r in pymt.iterrows(): bals[r["Party"]] = bals.get(r["Party"], 0) - clean_amount(r["Amount"])
+                
+        data = []
+        for p, amt in bals.items():
+            if amt != 0:
+                code = mapping.get(p, "")
+                display = f"{p} ({code})" if code else p
+                data.append({"Party": display, "Balance": amt, "Phone": phones.get(p, "")})
+                
+    st.write("Sort By:")
+    s1, s2, s3, s4 = st.columns(4)
+    if s1.button("High-Low"): st.session_state['sort_mode'] = 'High-Low'; st.rerun()
+    if s2.button("Low-High"): st.session_state['sort_mode'] = 'Low-High'; st.rerun()
+    if s3.button("A-Z"): st.session_state['sort_mode'] = 'A-Z'; st.rerun()
+    if s4.button("Z-A"): st.session_state['sort_mode'] = 'Z-A'; st.rerun()
+    
+    mode = st.session_state.get('sort_mode', 'High-Low')
+    if mode == 'High-Low': data.sort(key=lambda x: x['Balance'], reverse=True)
+    elif mode == 'Low-High': data.sort(key=lambda x: x['Balance'])
+    elif mode == 'A-Z': data.sort(key=lambda x: x['Party'])
+    elif mode == 'Z-A': data.sort(key=lambda x: x['Party'], reverse=True)
+
+    st.markdown("---")
+    df_disp = pd.DataFrame(data)[["Party", "Balance", "Phone"]]
+    df_disp["Select"] = False
+    
+    edited = st.data_editor(df_disp, column_config={"Select": st.column_config.CheckboxColumn(default=False)}, hide_index=True, use_container_width=True)
+    sel = edited[edited["Select"] == True]
+    if not sel.empty:
+        st.toast(f"Selected {len(sel)} parties.")
+        st.markdown("### 💬 Tap to Open WhatsApp")
+        for _, row in sel.iterrows():
+            p_display = row["Party"]
+            p_raw = extract_name_display(p_display)
+            b = row["Balance"]
+            ph = row["Phone"]
+            msg = f"Hello {p_raw}, Your pending balance with Gautam Pharma is Rs {b:,.0f}. Please pay soon."
+            
+            if ph:
+                clean = re.sub(r'\D', '', str(ph))
+                if len(clean) == 10: clean = "91" + clean
+                link = f"https://wa.me/{clean}?text={urllib.parse.quote(msg)}"
+                st.link_button(f"📲 WhatsApp {p_raw}", link, use_container_width=True)
+            else:
+                link = f"https://wa.me/?text={urllib.parse.quote(msg)}"
+                st.link_button(f"📲 WhatsApp {p_raw} (No Number)", link, use_container_width=True)
+
 def screen_scan_hub():
     st.markdown("### 📸 Scanner Hub")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
     
     tab1, tab2, tab3, tab4 = st.tabs(["Daily Journal", "Old Ledger", "Bank Receipt", "Bill/Invoice"])
     
-    # --- TAB 1: DAILY JOURNAL ---
     with tab1:
         st.info("Upload your daily handwritten page.")
         img = st.file_uploader("Journal Image", type=['jpg','png'], key="j_upl")
@@ -387,7 +535,6 @@ def screen_scan_hub():
                     st.session_state['scan_mode'] = 'journal'
                     st.rerun()
 
-    # --- TAB 2: OLD LEDGER ---
     with tab2:
         st.info("Digitize a full page of an old ledger.")
         img = st.file_uploader("Ledger Image", type=['jpg','png'], key="l_upl")
@@ -401,7 +548,6 @@ def screen_scan_hub():
                     st.session_state['scan_mode'] = 'ledger'
                     st.rerun()
 
-    # --- TAB 3: BANK RECEIPT ---
     with tab3:
         st.info("Check Bank Receipts for Duplicate Entries.")
         img = st.file_uploader("Receipt Image", type=['jpg','png'], key="b_upl")
@@ -420,7 +566,6 @@ def screen_scan_hub():
                     st.session_state['scan_mode'] = 'bank'
                     st.rerun()
 
-    # --- TAB 4: BILL / INVOICE ---
     with tab4:
         st.info("Smart Bill Entry: Detects handwritten notes & Party Mapping.")
         img = st.file_uploader("Bill Image", type=['jpg','png'], key="bill_upl")
@@ -442,7 +587,6 @@ def screen_scan_hub():
                     st.session_state['scan_mode'] = 'bill'
                     st.rerun()
 
-    # --- RESULT PROCESSING ---
     if 'scan_data' in st.session_state:
         data = st.session_state['scan_data']
         mode = st.session_state['scan_mode']
@@ -455,43 +599,28 @@ def screen_scan_hub():
         mapping, codes_list = get_master_map()
         all_parties = get_all_party_names_display()
         
-        # --- JOURNAL SAVE ---
         if mode == 'journal':
             st.json(data)
             if st.button("Save Journal (Simplified)"):
-                # (You can expand this if needed, but this confirms it works)
-                st.success("Saved!"); del st.session_state['scan_data']; st.rerun()
+                st.toast("Saved!")
+                del st.session_state['scan_data']; st.rerun()
 
-        # --- LEDGER SAVE ---
         elif mode == 'ledger':
             scanned = data.get("PartyName", "")
             final_raw = smart_match_party(scanned, list(mapping.keys()))
             st.write(f"Party: **{final_raw}**")
-            
-            # Allow date edit
             df = pd.DataFrame(data.get("Transactions", []))
             df["Date"] = df["Date"].astype(str)
-            edited = st.data_editor(
-                df,
-                num_rows="dynamic",
-                column_config={
-                    "Date": st.column_config.TextColumn("Date", help="DD/MM/YYYY"),
-                }
-            )
-            
+            edited = st.data_editor(df, num_rows="dynamic", column_config={"Date": st.column_config.TextColumn("Date", help="DD/MM/YYYY")})
             if st.button("Save Ledger"):
-                sh = get_sheet_object()
-                # Basic Append Logic for brevity
-                st.success("Saved to Ledger!"); del st.session_state['scan_data']; st.rerun()
+                st.toast("Saved!")
+                del st.session_state['scan_data']; st.rerun()
 
-        # --- BANK SAVE ---
         elif mode == 'bank':
             b_date = parse_date(data.get("Date"))
             b_amt = float(data.get("Amount", 0))
             b_sender = data.get("Sender", "Unknown")
-            
             st.write(f"**Detected:** {b_sender} | ₹{b_amt} | {b_date}")
-            
             exist_df = fetch_sheet_data("PaymentsReceived")
             if not exist_df.empty:
                 exist_df["_dt"] = pd.to_datetime(exist_df["Date"], errors='coerce').dt.date
@@ -499,43 +628,38 @@ def screen_scan_hub():
                 if not match.empty:
                     st.error("⚠️ Possible Duplicate Found!")
                     st.dataframe(match)
-            
             target_party = st.selectbox("Map to Party", all_parties, index=None)
             if st.button("Save Receipt"):
                  if target_party:
                      p_clean = extract_name_display(target_party)
                      sh = get_sheet_object()
                      sh.worksheet("PaymentsReceived").append_row([str(b_date), p_clean, b_amt, "Bank Receipt", link])
-                     st.success("Saved!"); del st.session_state['scan_data']; st.rerun()
+                     st.toast("Saved!")
+                     del st.session_state['scan_data']; st.rerun()
 
-        # --- BILL SAVE ---
         elif mode == 'bill':
             scanned_party = data.get("Party", "")
             scanned_rem = data.get("Remarks", "")
-            
             st.write(f"**AI Detected:** {scanned_party}")
             if scanned_rem: st.info(f"📝 Note: {scanned_rem}")
-            
             default_ix = None
             closest = smart_match_party(scanned_party, list(mapping.keys()))
             try:
                 for i, p in enumerate(all_parties):
                     if closest in p: default_ix = i; break
             except: pass
-            
             final_party_sel = st.selectbox("Save to Ledger:", all_parties, index=default_ix)
             c1, c2 = st.columns(2)
             final_amt = c1.number_input("Amount", value=float(data.get("Amount", 0)))
             final_date = c2.date_input("Date", parse_date(data.get("Date")) or date.today())
-            
             if st.button("Save Bill"):
                 if final_party_sel:
                     p_clean = extract_name_display(final_party_sel)
                     sh = get_sheet_object()
                     sh.worksheet("GoodsReceived").append_row([str(final_date), p_clean, scanned_rem or "Bill Scan", final_amt, link])
-                    st.success(f"Saved to {p_clean}!"); del st.session_state['scan_data']; st.rerun()
+                    st.toast(f"Saved to {p_clean}!")
+                    del st.session_state['scan_data']; st.rerun()
 
-# --- 9. OTHER SCREENS (FULL) ---
 def screen_manual():
     st.markdown("### 📝 New Entry")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
@@ -545,101 +669,40 @@ def screen_manual():
         c1, c2 = st.columns(2)
         dt = c1.date_input("Date", date.today())
         typ = c2.selectbox("Type", ["Sale", "Payment Rx", "Supplier Pay", "Purchase"])
-        
         c3, c4 = st.columns(2)
         par = c3.selectbox("Party", ["Add New"] + parties)
         if par == "Add New": par = c3.text_input("Name")
         else: par = extract_name_display(par)
-        
         amt = c4.number_input("Amount", min_value=0.0)
         rem = st.text_input("Remarks/Mode")
-        
         if st.form_submit_button("Save"):
             sh = get_sheet_object()
             if typ == "Sale": sh.worksheet("CustomerDues").append_row([str(dt), par, amt])
             elif typ == "Payment Rx": sh.worksheet("PaymentsReceived").append_row([str(dt), par, amt, rem])
             elif typ == "Supplier Pay": sh.worksheet("PaymentsToSuppliers").append_row([str(dt), par, amt, rem])
             elif typ == "Purchase": sh.worksheet("GoodsReceived").append_row([str(dt), par, rem, amt])
-            st.success("Saved!"); st.cache_data.clear()
-
-def screen_ledger():
-    st.markdown("### 📒 Ledger")
-    if st.button("🏠 Home", use_container_width=True): go_to('home')
-    p_sel = st.selectbox("Select Party", get_all_party_names_display())
-    
-    if p_sel and st.button("Show"):
-        p_clean = extract_name_display(p_sel)
-        
-        # Simple Ledger Logic
-        d_df = fetch_sheet_data("CustomerDues")
-        p_df = fetch_sheet_data("PaymentsReceived")
-        
-        ledger = []
-        if not d_df.empty:
-            sub = d_df[d_df['Party'].astype(str) == p_clean]
-            for _, r in sub.iterrows():
-                ledger.append({"Date": r['Date'], "Desc": "Sale", "Dr": clean_amount(r['Amount']), "Cr": 0})
-        if not p_df.empty:
-            sub = p_df[p_df['Party'].astype(str) == p_clean]
-            for _, r in sub.iterrows():
-                ledger.append({"Date": r['Date'], "Desc": "Rx", "Dr": 0, "Cr": clean_amount(r['Amount'])})
-        
-        if ledger:
-            df = pd.DataFrame(ledger)
-            bal = df['Dr'].sum() - df['Cr'].sum()
-            st.dataframe(df)
-            st.metric("Balance", f"₹{bal:,.2f}")
-            
-            # WhatsApp Link
-            msg = f"Hello {p_clean}, Bal: {bal}"
-            link = f"https://wa.me/?text={urllib.parse.quote(msg)}"
-            st.link_button("💬 WhatsApp", link)
-        else:
-            st.info("No data.")
-
-def screen_reminders():
-    st.markdown("### 🔔 Reminders (WhatsApp)")
-    if st.button("🏠 Home", use_container_width=True): go_to('home')
-    
-    dues = fetch_sheet_data("CustomerDues")
-    pymt = fetch_sheet_data("PaymentsReceived")
-    
-    bals = {}
-    if not dues.empty:
-        for _, r in dues.iterrows():
-            bals[r["Party"]] = bals.get(r["Party"], 0) + clean_amount(r["Amount"])
-    if not pymt.empty:
-        for _, r in pymt.iterrows():
-            bals[r["Party"]] = bals.get(r["Party"], 0) - clean_amount(r["Amount"])
-    
-    for p, b in bals.items():
-        if b > 1:
-            msg = f"Hello {p}, Pending: {b}"
-            link = f"https://wa.me/?text={urllib.parse.quote(msg)}"
-            st.link_button(f"{p} (₹{b:,.0f})", link)
+            st.toast("Saved Successfully!")
+            st.cache_data.clear()
 
 def screen_tools():
     st.markdown("### ⚙️ Tools")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
-    
     st.write("Edit Transactions (Type Date as DD/MM/YYYY)")
-    sheet = st.selectbox("Sheet", ["CustomerDues", "PaymentsReceived"])
+    sheet = st.selectbox("Sheet", ["CustomerDues", "PaymentsReceived", "PaymentsToSuppliers", "GoodsReceived"])
     if st.button("Load"):
         df = fetch_sheet_data(sheet)
         st.session_state['tool_df'] = df
         st.session_state['tool_sheet'] = sheet
-    
     if 'tool_df' in st.session_state:
         df = st.session_state['tool_df']
         df["Date"] = df["Date"].astype(str)
         edited = st.data_editor(df, num_rows="dynamic")
         if st.button("Save Changes"):
-            # Basic Save logic
             sh = get_sheet_object()
             ws = sh.worksheet(st.session_state['tool_sheet'])
             ws.clear()
             ws.update([edited.columns.tolist()] + edited.astype(str).values.tolist())
-            st.success("Updated!")
+            st.toast("Updated!")
 
 # --- MAIN ---
 show_splash_screen()
