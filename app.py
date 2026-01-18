@@ -72,7 +72,7 @@ st.markdown("""
         align-items: center;
         height: 70vh;
         flex-direction: column;
-        animation: fadeOut 2.5s forwards;
+        animation: fadeOut 4s forwards;
     }
     .splash-container img {
         width: 150px; 
@@ -89,8 +89,8 @@ st.markdown("""
     }
     @keyframes fadeOut {
         0% { opacity: 0; transform: scale(0.8); }
-        20% { opacity: 1; transform: scale(1); }
-        70% { opacity: 1; transform: scale(1); }
+        15% { opacity: 1; transform: scale(1); }
+        85% { opacity: 1; transform: scale(1); } 
         100% { opacity: 0; transform: scale(1.1); }
     }
     </style>
@@ -109,46 +109,14 @@ def show_splash_screen():
                 <img src="{logo_url}">
                 <div class="splash-sub">Gautam Pharma</div>
             </div>
-            <style>
-                .splash-container {{
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                    height: 70vh;
-                    flex-direction: column;
-                    animation: fadeOut 4s forwards;
-                }}
-                .splash-container img {{
-                    width: 150px; 
-                    margin-bottom: 20px;
-                    border-radius: 20px;
-                    box-shadow: 0 0 30px rgba(41, 121, 255, 0.2);
-                }}
-                .splash-sub {{
-                    font-size: 24px;
-                    color: #a0a0a0;
-                    font-weight: 600;
-                    letter-spacing: 2px;
-                    text-transform: uppercase;
-                }}
-                @keyframes fadeOut {{
-                    0% {{ opacity: 0; transform: scale(0.8); }}
-                    15% {{ opacity: 1; transform: scale(1); }}
-                    85% {{ opacity: 1; transform: scale(1); }} 
-                    100% {{ opacity: 0; transform: scale(1.1); }}
-                }}
-            </style>
             """, unsafe_allow_html=True)
             time.sleep(4)
         splash.empty()
         st.session_state["splash_shown"] = True
 
-# --- RUN SPLASH SCREEN DIRECTLY ---
-show_splash_screen()
-
-# (Password function deleted from here)
-# (Password check deleted from here)
-
+# --- 2. PASSWORD PROTECTION ---
+# Only run logic in main block
+pass
 
 # --- 3. CONNECTION & UTILS ---
 @st.cache_resource
@@ -340,15 +308,88 @@ def screen_home():
     
     c1, c2, c3 = st.columns(3)
     if c1.button("📝\nEntry"): go_to('manual')
-    if c2.button("📒\nLedger"): go_to('ledger')
-    if c3.button("🔔\nRemind"): go_to('reminders')
+    if c2.button("📅\nDay Book"): go_to('day_book')
+    if c3.button("📒\nLedger"): go_to('ledger')
+    
     c4, c5, c6 = st.columns(3)
     if c4.button("📸\nScan"): go_to('scan_daily')
-    if c5.button("⚙️\nTools"): go_to('tools')
-    if c6.button("📂\nOld"): go_to('scan_historical')
+    if c5.button("🔔\nRemind"): go_to('reminders')
+    if c6.button("⚙️\nTools"): go_to('tools')
+
+def screen_day_book():
+    st.markdown("### 📅 Day Book (Roznamcha)")
+    if st.button("🏠 Home", use_container_width=True): go_to('home')
+    
+    view_date = st.date_input("Select Date", date.today())
+    
+    with st.spinner("Fetching Day's Data..."):
+        sales = fetch_sheet_data("CustomerDues")
+        received = fetch_sheet_data("PaymentsReceived")
+        paid = fetch_sheet_data("PaymentsToSuppliers")
+        purchases = fetch_sheet_data("GoodsReceived")
+
+    def filter_by_date(df):
+        if df.empty or "Date" not in df.columns: return pd.DataFrame()
+        df["_dt"] = pd.to_datetime(df["Date"], errors='coerce', dayfirst=True).dt.date
+        filtered = df[df["_dt"] == view_date].copy()
+        return filtered.drop(columns=["_dt"])
+
+    d_sales = filter_by_date(sales)
+    d_received = filter_by_date(received)
+    d_paid = filter_by_date(paid)
+    d_purchases = filter_by_date(purchases)
+
+    t_sales = d_sales["Amount"].apply(clean_amount).sum() if not d_sales.empty else 0
+    t_rec = d_received["Amount"].apply(clean_amount).sum() if not d_received.empty else 0
+    t_paid = d_paid["Amount"].apply(clean_amount).sum() if not d_paid.empty else 0
+    
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Total Sales", f"₹{t_sales:,.0f}")
+    m2.metric("Total Received", f"₹{t_rec:,.0f}")
+    m3.metric("Total Paid", f"₹{t_paid:,.0f}")
+    st.markdown("---")
+
+    def render_section(title, df, sheet_name, color):
+        if df.empty: return
+        st.markdown(f"#### {title}")
+        df["Date"] = df["Date"].astype(str)
+        edited = st.data_editor(
+            df,
+            key=f"editor_{sheet_name}",
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "Date": st.column_config.TextColumn("Date", help="DD/MM/YYYY"),
+                "Amount": st.column_config.NumberColumn("Amount", format="₹%.2f")
+            }
+        )
+        if st.button(f"💾 Save {title}", key=f"save_{sheet_name}"):
+            try:
+                full_df = fetch_sheet_data(sheet_name)
+                full_df["_dt"] = pd.to_datetime(full_df["Date"], errors='coerce', dayfirst=True).dt.date
+                kept_rows = full_df[full_df["_dt"] != view_date].drop(columns=["_dt"])
+                
+                edited["Date"] = pd.to_datetime(edited["Date"], dayfirst=True).dt.strftime("%Y-%m-%d")
+                final_df = pd.concat([kept_rows, edited], ignore_index=True)
+                
+                sh = get_sheet_object()
+                ws = sh.worksheet(sheet_name)
+                ws.clear()
+                ws.update([final_df.columns.tolist()] + final_df.astype(str).values.tolist())
+                st.success(f"Updated {title}!"); st.cache_data.clear(); time.sleep(1); st.rerun()
+            except Exception as e:
+                st.error(f"Error saving: {str(e)}")
+
+    render_section("🔵 Sales (Bills)", d_sales, "CustomerDues", "blue")
+    render_section("🟢 Payments Received", d_received, "PaymentsReceived", "green")
+    render_section("🔴 Paid to Suppliers", d_paid, "PaymentsToSuppliers", "red")
+    render_section("🟠 Purchases (Goods)", d_purchases, "GoodsReceived", "orange")
+
+    if d_sales.empty and d_received.empty and d_paid.empty and d_purchases.empty:
+        st.info(f"No transactions found for {view_date.strftime('%d %b %Y')}")
 
 def screen_reminders():
-    st.markdown("### 🔔 Payment Reminders")
+    st.markdown("### 🔔 Payment Reminders (WhatsApp)")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
     
     with st.spinner("Analyzing..."):
@@ -399,18 +440,24 @@ def screen_reminders():
     sel = edited[edited["Select"] == True]
     if not sel.empty:
         st.success(f"Selected {len(sel)} parties.")
+        st.markdown("### 💬 Tap to Open WhatsApp")
         for _, row in sel.iterrows():
             p_display = row["Party"]
             p_raw = extract_name_display(p_display)
             b = row["Balance"]
             ph = row["Phone"]
-            msg = f"Hello {p_raw}, Your pending balance is Rs {b:,.0f}. Please pay soon."
-            link = f"https://wa.me/?text={urllib.parse.quote(msg)}"
+            msg = f"Hello {p_raw}, Your pending balance with Gautam Pharma is Rs {b:,.0f}. Please pay soon."
+            
+            # --- WHATSAPP LINK LOGIC ---
             if ph:
                 clean = re.sub(r'\D', '', str(ph))
                 if len(clean) == 10: clean = "91" + clean
                 link = f"https://wa.me/{clean}?text={urllib.parse.quote(msg)}"
-            st.link_button(f"📲 {p_raw}", link)
+                st.link_button(f"📲 WhatsApp {p_raw}", link, use_container_width=True)
+            else:
+                # Fallback if no number is saved
+                link = f"https://wa.me/?text={urllib.parse.quote(msg)}"
+                st.link_button(f"📲 WhatsApp {p_raw} (No Number Saved)", link, use_container_width=True)
 
 def screen_tools():
     st.markdown("### ⚙️ Admin Tools")
@@ -448,37 +495,58 @@ def screen_tools():
             st.success(f"Merged {count} entries!"); st.cache_data.clear()
 
     with tab2:
-        st.write("Edit transactions.")
+        st.write("### Edit Transactions")
+        st.info("You can type dates as DD/MM/YYYY here.")
+        
         sheet = st.selectbox("Sheet", ["CustomerDues", "PaymentsReceived", "PaymentsToSuppliers", "GoodsReceived"])
         raw_parties = [extract_name_display(p) for p in get_all_party_names_display()]
         f_party = st.selectbox("Filter", ["All"] + sorted(list(set(raw_parties))))
+        
         c1, c2 = st.columns(2)
         s_date = c1.date_input("Start", date.today().replace(day=1))
         e_date = c2.date_input("End", date.today())
         
-        if st.button("Load"):
+        if st.button("Load Data"):
             df = fetch_sheet_data(sheet)
             if not df.empty:
                 if f_party != "All":
                     col = "Party" if "Party" in df.columns else "Supplier"
                     if col in df.columns: df = df[df[col] == f_party]
                 if "Date" in df.columns:
-                    df["D"] = pd.to_datetime(df["Date"], errors='coerce').dt.date
-                    df = df[(df["D"] >= s_date) & (df["D"] <= e_date)].drop(columns=["D"])
-                st.session_state['edit_df'] = df; st.session_state['edit_s'] = sheet
+                    df["D"] = pd.to_datetime(df["Date"], errors='coerce', dayfirst=True).dt.date
+                    df = df[(df["D"] >= s_date) & (df["D"] <= e_date)]
+                    df = df.drop(columns=["D"])
+                st.session_state['edit_df'] = df
+                st.session_state['edit_s'] = sheet
         
         if 'edit_df' in st.session_state:
-            edited = st.data_editor(st.session_state['edit_df'], num_rows="dynamic", use_container_width=True)
-            if st.button("Save Changes"):
+            df_display = st.session_state['edit_df'].copy()
+            if "Date" in df_display.columns:
+                df_display["Date"] = df_display["Date"].astype(str)
+
+            edited = st.data_editor(
+                df_display,
+                num_rows="dynamic",
+                use_container_width=True,
+                column_config={
+                    "Date": st.column_config.TextColumn("Date", help="Type as DD/MM/YYYY"),
+                    "Amount": st.column_config.NumberColumn("Amount", format="₹%.2f")
+                }
+            )
+
+            if st.button("💾 Save Changes"):
                 try:
                     if f_party == "All":
+                        if "Date" in edited.columns:
+                            edited["Date"] = pd.to_datetime(edited["Date"], dayfirst=True).dt.strftime("%Y-%m-%d")
                         sh = get_sheet_object()
                         ws = sh.worksheet(st.session_state['edit_s'])
                         ws.clear()
                         ws.update([edited.columns.tolist()] + edited.astype(str).values.tolist())
-                        st.success("Updated!"); st.cache_data.clear()
-                    else: st.warning("Please filter by 'All' to save safely.")
-                except Exception as e: st.error(str(e))
+                        st.success("✅ Updated successfully!"); st.cache_data.clear()
+                    else: 
+                        st.warning("⚠️ Safety Lock: Please select 'All' in Filter to delete or save changes.")
+                except Exception as e: st.error(f"Error: {str(e)}")
 
     with tab3:
         st.write("Edit Codes, Phones & Addresses.")
@@ -540,7 +608,6 @@ def screen_digitize_ledger():
             scanned = data.get("PartyName", "")
             mapping, codes_list = get_master_map()
             existing_names = list(mapping.keys())
-            
             final_raw = smart_match_party(scanned, existing_names)
             existing_code = mapping.get(final_raw, "")
             
@@ -552,17 +619,13 @@ def screen_digitize_ledger():
                 
             st.write("Party Name & Code:")
             name_input = st.text_input("Edit Name (AI Guess)", value=display_val)
-            
             c1, c2 = st.columns(2)
             op = c1.number_input("Opening Bal", value=float(data.get("OpeningBalance", 0)))
             dt = c2.date_input("Date (Opening Bal)", date.today().replace(month=4, day=1))
             
-            # --- PREPARE TABLE ---
             df = pd.DataFrame(data.get("Transactions", []))
             for c in ["Date", "Particulars", "Debit", "Credit"]: 
                 if c not in df.columns: df[c] = ""
-            
-            # FORCE ALL COLUMNS TO STRING/NUMBER TO PREVENT ERRORS
             df["Date"] = df["Date"].astype(str)
             df["Particulars"] = df["Particulars"].astype(str)
             df["Debit"] = df["Debit"].apply(clean_amount)
@@ -582,45 +645,30 @@ def screen_digitize_ledger():
             )
             
             if st.form_submit_button("Save"):
-                if "(" in name_input:
-                    p_raw = name_input.split("(")[0].strip()
-                else:
-                    p_raw = name_input.strip()
-                
+                if "(" in name_input: p_raw = name_input.split("(")[0].strip()
+                else: p_raw = name_input.strip()
                 sh = get_sheet_object()
-                
-                # Update Master if New
                 if p_raw not in existing_names:
                     master = fetch_sheet_data("Party_Master")
                     curr_codes = master["Code"].tolist() if "Code" in master.columns else []
                     final_code = get_next_code(curr_codes, "R")
                     sh.worksheet("Party_Master").append_row([p_raw, final_code, "Customer", "", ""])
                 
-                # Save Transactions with Date Fix
                 s_rows, p_rows = [], []
-                
-                # Helper to convert DD/MM/YYYY -> YYYY-MM-DD
                 def fix_date(d_str):
-                    try:
-                        # dayfirst=True tells it that 01/02 is 1st Feb, not 2nd Jan
-                        return pd.to_datetime(d_str, dayfirst=True).strftime("%Y-%m-%d")
-                    except:
-                        return str(date.today())
+                    try: return pd.to_datetime(d_str, dayfirst=True).strftime("%Y-%m-%d")
+                    except: return str(date.today())
 
                 if op > 0: s_rows.append([str(dt), p_raw, op])
-                
                 for _, r in edited.iterrows():
                     raw_date = str(r.get("Date", ""))
                     final_date = fix_date(raw_date)
-                    
                     dr, cr = clean_amount(r.get("Debit", 0)), clean_amount(r.get("Credit", 0))
-                    
                     if dr > 0: s_rows.append([final_date, p_raw, dr])
                     if cr > 0: p_rows.append([final_date, p_raw, cr, "Old Ledger"])
                 
                 if s_rows: sh.worksheet("CustomerDues").append_rows(s_rows)
                 if p_rows: sh.worksheet("PaymentsReceived").append_rows(p_rows)
-                
                 st.success("Saved!"); st.cache_data.clear(); del st.session_state['hist_data']
 
 def screen_manual():
@@ -721,14 +769,13 @@ def screen_ledger():
             status = "Receivable" if bal > 0 else "Payable"
             st.metric("Net Balance", f"₹{abs(bal):,.2f}", status)
             
-            # PDF Generation
             pdf_bytes = generate_pdf(sel_party, df, s, e)
             st.download_button("📄 PDF Statement", pdf_bytes, "stmt.pdf", "application/pdf", use_container_width=True)
             
-            # SMS Link (Updated for Direct SMS)
+            # --- LEDGER: WHATSAPP LINK ---
             msg = f"Hello {sel_party}, Balance: {bal}"
             enc_msg = urllib.parse.quote(msg)
-            st.link_button("💬 Send SMS", f"sms:?body={enc_msg}", use_container_width=True)
+            st.link_button("💬 WhatsApp", f"https://wa.me/?text={enc_msg}", use_container_width=True)
 
         else: st.info("No Transactions Found.")
 
@@ -746,100 +793,4 @@ def screen_scan_daily():
         with st.form("daily_save"):
             st.write("### Review & Fix Data")
             ai_date = parse_date(data.get("Date")) or date.today()
-            txn_date = st.date_input("Entry Date", ai_date)
-            
-            mapping, codes_list = get_master_map()
-            existing_names = list(mapping.keys())
-            
-            def prepare_df_with_code(raw_data, col_name, prefix):
-                rows = []
-                temp_codes = codes_list.copy()
-                for r in raw_data:
-                    raw_val = r.get("Party") or r.get("Supplier") or ""
-                    raw_name = smart_match_party(raw_val, existing_names)
-                    if raw_name in mapping and mapping[raw_name]:
-                        code = mapping[raw_name]
-                    else:
-                        code = get_next_code(temp_codes, prefix)
-                        temp_codes.append(code)
-                    row = r.copy()
-                    if col_name == "Supplier" and "Party" in row: del row["Party"]
-                    row[col_name] = raw_name
-                    row["Code"] = code
-                    rows.append(row)
-                return pd.DataFrame(rows)
-
-            st.markdown("#### 1. Sales (Retailers - R)")
-            raw_s = data.get("CustomerDues", [])
-            df_s = prepare_df_with_code(raw_s, "Party", "R") if raw_s else pd.DataFrame(columns=["Party", "Code", "Amount"])
-            ed_s = st.data_editor(df_s, num_rows="dynamic", key="s_ed")
-            
-            st.markdown("#### 2. Payments (Retailers - R)")
-            raw_p = data.get("PaymentsReceived", [])
-            df_p = prepare_df_with_code(raw_p, "Party", "R") if raw_p else pd.DataFrame(columns=["Party", "Code", "Amount", "Mode"])
-            ed_p = st.data_editor(df_p, num_rows="dynamic", key="p_ed")
-            
-            st.markdown("#### 3. Supplier Payments (Suppliers - S)")
-            raw_su = data.get("PaymentsToSuppliers", [])
-            df_su = prepare_df_with_code(raw_su, "Supplier", "S") if raw_su else pd.DataFrame(columns=["Supplier", "Code", "Amount", "Mode"])
-            ed_su = st.data_editor(df_su, num_rows="dynamic", key="su_ed")
-            
-            st.markdown("#### 4. Purchases (Suppliers - S)")
-            raw_g = data.get("GoodsReceived", [])
-            df_g = prepare_df_with_code(raw_g, "Supplier", "S") if raw_g else pd.DataFrame(columns=["Supplier", "Code", "Items", "Amount"])
-            ed_g = st.data_editor(df_g, num_rows="dynamic", key="g_ed")
-
-            if st.form_submit_button("💾 Save All"):
-                sh = get_sheet_object()
-                dt = str(txn_date)
-                master_updates = []
-                seen_new_codes = set()
-                
-                for df in [ed_s, ed_p]:
-                    for _, r in df.iterrows():
-                        p, c = str(r["Party"]).strip(), str(r["Code"]).strip()
-                        if p and c:
-                            if (p not in mapping) or (p in mapping and not mapping[p]):
-                                if c not in seen_new_codes:
-                                    master_updates.append([p, c, "Customer", "", ""])
-                                    seen_new_codes.add(c)
-                                    mapping[p] = c
-                
-                for df, col in [(ed_su, "Supplier"), (ed_g, "Supplier")]:
-                    for _, r in df.iterrows():
-                        p, c = str(r[col]).strip(), str(r["Code"]).strip()
-                        if p and c:
-                            if (p not in mapping) or (p in mapping and not mapping[p]):
-                                if c not in seen_new_codes:
-                                    master_updates.append([p, c, "Supplier", "", ""])
-                                    seen_new_codes.add(c)
-                                    mapping[p] = c
-
-                if master_updates:
-                    sh.worksheet("Party_Master").append_rows(master_updates)
-                    st.toast(f"✅ Added {len(master_updates)} new parties/codes to Master List")
-
-                rows = [[dt, r["Party"], clean_amount(r["Amount"])] for _, r in ed_s.iterrows() if r["Party"]]
-                if rows: sh.worksheet("CustomerDues").append_rows(rows)
-                rows = [[dt, r["Party"], clean_amount(r["Amount"]), r.get("Mode", "Cash")] for _, r in ed_p.iterrows() if r["Party"]]
-                if rows: sh.worksheet("PaymentsReceived").append_rows(rows)
-                rows = [[dt, r["Supplier"], clean_amount(r["Amount"]), r.get("Mode", "Cash")] for _, r in ed_su.iterrows() if r["Supplier"]]
-                if rows: sh.worksheet("PaymentsToSuppliers").append_rows(rows)
-                rows = [[dt, r["Supplier"], r.get("Items", ""), clean_amount(r["Amount"])] for _, r in ed_g.iterrows() if r["Supplier"]]
-                if rows: sh.worksheet("GoodsReceived").append_rows(rows)
-                st.success("Saved Successfully!"); del st.session_state['daily_data']; st.cache_data.clear()
-
-# --- MAIN EXECUTION ---
-if 'page' not in st.session_state: st.session_state['page'] = 'home'
-
-if st.session_state['page'] == 'home': screen_home()
-elif st.session_state['page'] == 'manual': screen_manual()
-elif st.session_state['page'] == 'ledger': screen_ledger()
-elif st.session_state['page'] == 'scan_historical': screen_digitize_ledger()
-elif st.session_state['page'] == 'scan_daily': screen_scan_daily()
-elif st.session_state['page'] == 'tools': screen_tools()
-elif st.session_state['page'] == 'reminders': screen_reminders()
-
-
-
-
+            txn_date
