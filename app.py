@@ -114,11 +114,7 @@ def show_splash_screen():
         splash.empty()
         st.session_state["splash_shown"] = True
 
-# --- 2. PASSWORD PROTECTION ---
-# Only run logic in main block
-pass
-
-# --- 3. CONNECTION & UTILS ---
+# --- 2. CONNECTION & UTILS ---
 @st.cache_resource
 def get_gsheet_client():
     try:
@@ -198,7 +194,7 @@ def smart_match_party(scanned_name, existing_names):
     matches = difflib.get_close_matches(scanned_name, existing_names, n=1, cutoff=0.6)
     return matches[0] if matches else scanned_name
 
-# --- 4. AI HELPERS ---
+# --- 3. AI HELPERS ---
 def extract_json_from_text(text):
     try:
         start = text.find('{')
@@ -238,7 +234,7 @@ def run_daily_scan_extraction(image_bytes):
         return extract_json_from_text(response.choices[0].message.content)
     except: return None
 
-# --- 5. PDF ---
+# --- 4. PDF ---
 def generate_pdf(party, df, start, end):
     pdf = FPDF()
     pdf.add_page()
@@ -265,12 +261,12 @@ def generate_pdf(party, df, start, end):
         pdf.cell(30, 7, f"{bal:,.2f}", 1, 1)
     return pdf.output(dest='S').encode('latin-1')
 
-# --- 6. NAV HELPER ---
+# --- 5. NAV HELPER ---
 def go_to(page):
     st.session_state['page'] = page
     st.rerun()
 
-# --- 7. SCREENS ---
+# --- 6. SCREENS ---
 
 def screen_home():
     dues = fetch_sheet_data("CustomerDues")
@@ -306,6 +302,7 @@ def screen_home():
     st.metric("Net Position", f"₹{net:,.0f}")
     st.markdown("---")
     
+    # --- UPDATED BUTTON LAYOUT WITH DAY BOOK ---
     c1, c2, c3 = st.columns(3)
     if c1.button("📝\nEntry"): go_to('manual')
     if c2.button("📅\nDay Book"): go_to('day_book')
@@ -793,4 +790,103 @@ def screen_scan_daily():
         with st.form("daily_save"):
             st.write("### Review & Fix Data")
             ai_date = parse_date(data.get("Date")) or date.today()
-            txn_date
+            txn_date = st.date_input("Entry Date", ai_date)
+            mapping, codes_list = get_master_map()
+            existing_names = list(mapping.keys())
+            
+            def prepare_df_with_code(raw_data, col_name, prefix):
+                rows = []
+                temp_codes = codes_list.copy()
+                for r in raw_data:
+                    raw_val = r.get("Party") or r.get("Supplier") or ""
+                    raw_name = smart_match_party(raw_val, existing_names)
+                    if raw_name in mapping and mapping[raw_name]:
+                        code = mapping[raw_name]
+                    else:
+                        code = get_next_code(temp_codes, prefix)
+                        temp_codes.append(code)
+                    row = r.copy()
+                    if col_name == "Supplier" and "Party" in row: del row["Party"]
+                    row[col_name] = raw_name
+                    row["Code"] = code
+                    rows.append(row)
+                return pd.DataFrame(rows)
+
+            st.markdown("#### 1. Sales (Retailers - R)")
+            raw_s = data.get("CustomerDues", [])
+            df_s = prepare_df_with_code(raw_s, "Party", "R") if raw_s else pd.DataFrame(columns=["Party", "Code", "Amount"])
+            ed_s = st.data_editor(df_s, num_rows="dynamic", key="s_ed")
+            
+            st.markdown("#### 2. Payments (Retailers - R)")
+            raw_p = data.get("PaymentsReceived", [])
+            df_p = prepare_df_with_code(raw_p, "Party", "R") if raw_p else pd.DataFrame(columns=["Party", "Code", "Amount", "Mode"])
+            ed_p = st.data_editor(df_p, num_rows="dynamic", key="p_ed")
+            
+            st.markdown("#### 3. Supplier Payments (Suppliers - S)")
+            raw_su = data.get("PaymentsToSuppliers", [])
+            df_su = prepare_df_with_code(raw_su, "Supplier", "S") if raw_su else pd.DataFrame(columns=["Supplier", "Code", "Amount", "Mode"])
+            ed_su = st.data_editor(df_su, num_rows="dynamic", key="su_ed")
+            
+            st.markdown("#### 4. Purchases (Suppliers - S)")
+            raw_g = data.get("GoodsReceived", [])
+            df_g = prepare_df_with_code(raw_g, "Supplier", "S") if raw_g else pd.DataFrame(columns=["Supplier", "Code", "Items", "Amount"])
+            ed_g = st.data_editor(df_g, num_rows="dynamic", key="g_ed")
+
+            if st.form_submit_button("💾 Save All"):
+                sh = get_sheet_object()
+                dt = str(txn_date)
+                master_updates = []
+                seen_new_codes = set()
+                
+                for df in [ed_s, ed_p]:
+                    for _, r in df.iterrows():
+                        p, c = str(r["Party"]).strip(), str(r["Code"]).strip()
+                        if p and c:
+                            if (p not in mapping) or (p in mapping and not mapping[p]):
+                                if c not in seen_new_codes:
+                                    master_updates.append([p, c, "Customer", "", ""])
+                                    seen_new_codes.add(c)
+                                    mapping[p] = c
+                
+                for df, col in [(ed_su, "Supplier"), (ed_g, "Supplier")]:
+                    for _, r in df.iterrows():
+                        p, c = str(r[col]).strip(), str(r["Code"]).strip()
+                        if p and c:
+                            if (p not in mapping) or (p in mapping and not mapping[p]):
+                                if c not in seen_new_codes:
+                                    master_updates.append([p, c, "Supplier", "", ""])
+                                    seen_new_codes.add(c)
+                                    mapping[p] = c
+
+                if master_updates:
+                    sh.worksheet("Party_Master").append_rows(master_updates)
+                    st.toast(f"✅ Added {len(master_updates)} new parties/codes to Master List")
+
+                rows = [[dt, r["Party"], clean_amount(r["Amount"])] for _, r in ed_s.iterrows() if r["Party"]]
+                if rows: sh.worksheet("CustomerDues").append_rows(rows)
+                rows = [[dt, r["Party"], clean_amount(r["Amount"]), r.get("Mode", "Cash")] for _, r in ed_p.iterrows() if r["Party"]]
+                if rows: sh.worksheet("PaymentsReceived").append_rows(rows)
+                rows = [[dt, r["Supplier"], clean_amount(r["Amount"]), r.get("Mode", "Cash")] for _, r in ed_su.iterrows() if r["Supplier"]]
+                if rows: sh.worksheet("PaymentsToSuppliers").append_rows(rows)
+                rows = [[dt, r["Supplier"], r.get("Items", ""), clean_amount(r["Amount"])] for _, r in ed_g.iterrows() if r["Supplier"]]
+                if rows: sh.worksheet("GoodsReceived").append_rows(rows)
+                st.success("Saved Successfully!"); del st.session_state['daily_data']; st.cache_data.clear()
+
+# --- MAIN EXECUTION ---
+# 1. Show Splash
+show_splash_screen()
+
+# 2. PASSWORD CHECK REMOVED
+# (The code proceeds directly to the app below)
+
+# 3. Router
+if 'page' not in st.session_state: st.session_state['page'] = 'home'
+
+if st.session_state['page'] == 'home': screen_home()
+elif st.session_state['page'] == 'manual': screen_manual()
+elif st.session_state['page'] == 'day_book': screen_day_book()
+elif st.session_state['page'] == 'ledger': screen_ledger()
+elif st.session_state['page'] == 'scan_historical': screen_digitize_ledger()
+elif st.session_state['page'] == 'scan_daily': screen_scan_daily()
+elif st.session_state['page'] == 'tools': screen_tools()
+elif st.session_state['page'] == 'reminders': screen_reminders()
