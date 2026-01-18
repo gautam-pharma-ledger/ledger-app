@@ -32,7 +32,6 @@ st.markdown("""
         width: 100%; height: 3.5em; 
         background: linear-gradient(135deg, #262730 0%, #1e1e1e 100%);
         color: white; border: 1px solid #404040; border-radius: 12px; font-weight: 600;
-        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
     }
     .stButton>button:hover {
         background: linear-gradient(135deg, #2979ff 0%, #1565c0 100%);
@@ -104,9 +103,15 @@ def fetch_sheet_data(sheet_name):
         if not sh: return pd.DataFrame()
         data = sh.worksheet(sheet_name).get_all_records()
         df = pd.DataFrame(data)
+        
+        # --- CRITICAL FIX: CLEAN COLUMN NAMES ---
+        # This removes invisible spaces from headers (e.g. "Date " -> "Date")
+        df.columns = [str(c).strip() for c in df.columns]
+        
         # Clean Party Names immediately to fix mismatch errors
         if "Party" in df.columns: df["Party"] = df["Party"].astype(str).str.strip()
         if "Supplier" in df.columns: df["Supplier"] = df["Supplier"].astype(str).str.strip()
+        
         return df
     except: return pd.DataFrame()
 
@@ -264,10 +269,9 @@ def screen_home():
     total_receivable = 0
     total_payable = 0
     
-    # Calculate Totals with Stripped Names
+    # Calculate Totals
     if not dues.empty and not pymt.empty:
-        dues["Party"] = dues["Party"].str.strip()
-        pymt["Party"] = pymt["Party"].str.strip()
+        # Use strip() to ensure keys match
         sales = dues.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         cols = pymt.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         all_cust = sales.index.union(cols.index)
@@ -276,8 +280,6 @@ def screen_home():
             if bal > 0: total_receivable += bal
             
     if not goods.empty and not supp_pay.empty:
-        goods["Supplier"] = goods["Supplier"].str.strip()
-        supp_pay["Supplier"] = supp_pay["Supplier"].str.strip()
         purchases = goods.groupby("Supplier")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         paid_out = supp_pay.groupby("Supplier")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         all_supp = purchases.index.union(paid_out.index)
@@ -316,17 +318,23 @@ def screen_day_book():
         paid = fetch_sheet_data("PaymentsToSuppliers")
         purchases = fetch_sheet_data("GoodsReceived")
 
-    def filter_by_date(df):
+    # --- CRITICAL FIX: Robust Date Matching ---
+    # This matches the Ledger logic exactly (parsing row-by-row)
+    # instead of vectorized pandas which might fail on one bad row.
+    def robust_filter(df):
         if df.empty or "Date" not in df.columns: return pd.DataFrame()
-        # FIX: Robust date parsing for mixed formats (DD/MM/YYYY and YYYY-MM-DD)
-        df["_dt"] = pd.to_datetime(df["Date"], errors='coerce', dayfirst=True).dt.date
-        filtered = df[df["_dt"] == view_date].copy()
-        return filtered.drop(columns=["_dt"])
+        
+        mask = []
+        for d_str in df["Date"]:
+            p_d = parse_date(str(d_str))
+            if p_d and p_d == view_date: mask.append(True)
+            else: mask.append(False)
+        return df[mask]
 
-    d_sales = filter_by_date(sales)
-    d_received = filter_by_date(received)
-    d_paid = filter_by_date(paid)
-    d_purchases = filter_by_date(purchases)
+    d_sales = robust_filter(sales)
+    d_received = robust_filter(received)
+    d_paid = robust_filter(paid)
+    d_purchases = robust_filter(purchases)
 
     t_sales = d_sales["Amount"].apply(clean_amount).sum() if not d_sales.empty else 0
     t_rec = d_received["Amount"].apply(clean_amount).sum() if not d_received.empty else 0
@@ -341,20 +349,20 @@ def screen_day_book():
     def render_section(title, df):
         st.markdown(f"#### {title}")
         if df.empty:
-            st.caption("No entries found for this date.")
+            st.caption("No entries found.")
             return
         
-        # Display simplified table for better mobile view
-        cols = ["Party", "Amount", "Mode"] if "Mode" in df.columns else ["Party", "Amount"]
-        if "Supplier" in df.columns: cols = ["Supplier", "Amount"]
+        # Display selected columns only
+        cols = ["Party", "Amount", "Mode"]
+        if "Supplier" in df.columns: cols = ["Supplier", "Amount", "Mode"]
         if "Items" in df.columns: cols = ["Supplier", "Items", "Amount"]
         
-        # Check if columns exist
+        # Filter columns that actually exist
         final_cols = [c for c in cols if c in df.columns]
         st.dataframe(df[final_cols], use_container_width=True)
 
     render_section("🔵 Sales (Bills)", d_sales)
-    render_section("🟢 Payment Received (Cash/UPI)", d_received)
+    render_section("🟢 Payment Received", d_received)
     render_section("🔴 Paid to Suppliers", d_paid)
     render_section("🟠 Purchases (Goods)", d_purchases)
 
@@ -362,7 +370,6 @@ def screen_ledger():
     st.markdown("### 📒 Party Ledger")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
     
-    # Date Logic
     if 'l_s' not in st.session_state: st.session_state['l_s'] = date.today().replace(day=1)
     if 'l_e' not in st.session_state: st.session_state['l_e'] = date.today()
     
@@ -386,17 +393,15 @@ def screen_ledger():
         
         ledger = []
         
-        # FIX: Ensure names are stripped for accurate matching
+        # FIX: Ensure matching handles stripping
         if not d_df.empty:
-            d_df["Party"] = d_df["Party"].str.strip()
-            sub = d_df[d_df['Party'] == sel_party]
+            sub = d_df[d_df['Party'].astype(str).str.strip() == sel_party]
             for _, r in sub.iterrows():
                 r_date = parse_date(str(r['Date']))
                 if r_date and s <= r_date <= e: ledger.append({"Date": r_date, "Desc": "Sale", "Dr": clean_amount(r['Amount']), "Cr": 0})
         
         if not p_df.empty:
-            p_df["Party"] = p_df["Party"].str.strip()
-            sub = p_df[p_df['Party'] == sel_party]
+            sub = p_df[p_df['Party'].astype(str).str.strip() == sel_party]
             for _, r in sub.iterrows():
                 r_date = parse_date(str(r['Date']))
                 if r_date and s <= r_date <= e: ledger.append({"Date": r_date, "Desc": f"Rx ({r.get('Mode','')})", "Dr": 0, "Cr": clean_amount(r['Amount'])})
@@ -432,7 +437,6 @@ def screen_reminders():
             for _, r in master.iterrows(): phones[str(r["Name"]).strip()] = str(r.get("Phone", ""))
 
         bals = {}
-        # FIX: Unified Math Logic (Same as Home Screen)
         if not dues.empty:
             for _, r in dues.iterrows():
                 p = str(r["Party"]).strip()
@@ -444,7 +448,7 @@ def screen_reminders():
                 
         data = []
         for p, amt in bals.items():
-            if abs(amt) > 1: # Only show significant balances
+            if abs(amt) > 1:
                 code = mapping.get(p, "")
                 display = f"{p} ({code})" if code else p
                 data.append({"Party": display, "Balance": amt, "Phone": phones.get(p, "")})
