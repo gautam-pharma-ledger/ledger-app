@@ -19,47 +19,25 @@ import io
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Gautam Pharma", layout="centered", page_icon="💊")
 
-# --- CUSTOM CSS: MODERN & SMOOTH ---
+# --- CUSTOM CSS ---
 st.markdown("""
     <style>
-    /* 1. Global Dark Theme */
     .stApp { background-color: #0e1117; color: #e0e0e0; }
-    
-    /* 2. Dashboard Cards */
     div[data-testid="metric-container"] {
         background: linear-gradient(145deg, #1e1e1e, #252525);
-        border: 1px solid #333;
-        padding: 15px; border-radius: 15px;
+        border: 1px solid #333; padding: 15px; border-radius: 15px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-        transition: all 0.2s ease-in-out;
     }
-    div[data-testid="metric-container"]:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 6px 12px rgba(0,0,0,0.5);
-        border-color: #444;
-    }
-    
-    /* 3. Smooth Buttons */
     .stButton>button {
         width: 100%; height: 3.5em; 
         background: linear-gradient(135deg, #262730 0%, #1e1e1e 100%);
-        color: white; border: 1px solid #404040;
-        border-radius: 12px; font-weight: 600; letter-spacing: 0.5px;
+        color: white; border: 1px solid #404040; border-radius: 12px; font-weight: 600;
         transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
     }
     .stButton>button:hover {
         background: linear-gradient(135deg, #2979ff 0%, #1565c0 100%);
-        border-color: #2979ff;
-        transform: translateY(-2px);
-        box-shadow: 0 5px 15px rgba(41, 121, 255, 0.3);
+        border-color: #2979ff; transform: translateY(-2px);
     }
-    
-    /* 4. Inputs & Tables */
-    .stTextInput>div>div>input, .stDateInput>div>div>input, .stSelectbox>div>div>div {
-        background-color: #1a1c24; border-radius: 8px; border: 1px solid #333;
-    }
-    
-    /* 5. Splash Animation */
     .splash-container {
         display: flex; justify-content: center; align-items: center;
         height: 70vh; flex-direction: column; animation: fadeOut 3s forwards;
@@ -70,7 +48,6 @@ st.markdown("""
     }
     @keyframes fadeOut {
         0% { opacity: 0; transform: scale(0.8); }
-        20% { opacity: 1; transform: scale(1); }
         80% { opacity: 1; transform: scale(1); }
         100% { opacity: 0; transform: scale(1.1); }
     }
@@ -86,13 +63,13 @@ def show_splash_screen():
             st.markdown(f"""
             <div class="splash-container">
                 <img src="{logo_url}">
-                <div style="font-size: 26px; color: #cfcfcf; font-weight: 700; letter-spacing: 1px;">Gautam Pharma</div>
+                <div style="font-size: 26px; color: #cfcfcf; font-weight: 700;">Gautam Pharma</div>
             </div>""", unsafe_allow_html=True)
             time.sleep(3)
         splash.empty()
         st.session_state["splash_shown"] = True
 
-# --- 2. GOOGLE SERVICES (Cached for Speed) ---
+# --- 2. GOOGLE SERVICES ---
 @st.cache_resource
 def get_credentials():
     try:
@@ -120,23 +97,20 @@ def get_sheet_object():
         except: return None
     return None
 
-@st.cache_data(ttl=5) # Reduced TTL for snappier updates
+@st.cache_data(ttl=5)
 def fetch_sheet_data(sheet_name):
     try:
         sh = get_sheet_object()
         if not sh: return pd.DataFrame()
         data = sh.worksheet(sheet_name).get_all_records()
         df = pd.DataFrame(data)
-        # FORCE COLUMN NAMES to prevent "Payment not showing" errors
-        # If columns are empty, fill them
-        required = ["Date", "Party", "Supplier", "Amount", "Mode", "Items"]
-        for r in required:
-             # Check loosely
-             pass 
+        # Clean Party Names immediately to fix mismatch errors
+        if "Party" in df.columns: df["Party"] = df["Party"].astype(str).str.strip()
+        if "Supplier" in df.columns: df["Supplier"] = df["Supplier"].astype(str).str.strip()
         return df
     except: return pd.DataFrame()
 
-# --- 3. UTILS & COMPRESSION ---
+# --- 3. UTILS & HELPERS ---
 def compress_image(image_file):
     img = Image.open(image_file)
     if img.mode in ("RGBA", "P"): img = img.convert("RGB")
@@ -146,7 +120,7 @@ def compress_image(image_file):
         new_height = int(img.height * ratio)
         img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
     output = io.BytesIO()
-    img.save(output, format="JPEG", quality=65, optimize=True) # 65 quality for speed
+    img.save(output, format="JPEG", quality=65, optimize=True)
     output.seek(0)
     return output
 
@@ -158,14 +132,11 @@ def upload_to_drive(file_buffer, filename):
         query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder'"
         results = service.files().list(q=query, spaces='drive').execute()
         folders = results.get('files', [])
-        
         if not folders:
             file_metadata = {'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder'}
             folder = service.files().create(body=file_metadata, fields='id').execute()
             folder_id = folder.get('id')
-        else:
-            folder_id = folders[0].get('id')
-            
+        else: folder_id = folders[0].get('id')
         file_metadata = {'name': filename, 'parents': [folder_id]}
         media = MediaIoBaseUpload(file_buffer, mimetype='image/jpeg', resumable=True)
         file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
@@ -203,7 +174,8 @@ def get_all_party_names_display():
         col = "Party" if "Party" in df.columns else "Supplier"
         if not df.empty and col in df.columns:
             for name in df[col].unique():
-                if name not in mapping: mapping[name] = ""
+                name = str(name).strip()
+                if name and name not in mapping: mapping[name] = ""
     display_list = []
     for name in sorted(mapping.keys()):
         code = mapping[name]
@@ -219,7 +191,7 @@ def clean_amount(val):
     except: return 0.0
 
 def parse_date(date_str):
-    try: return pd.to_datetime(date_str).date()
+    try: return pd.to_datetime(date_str, dayfirst=True).date()
     except: return None
 
 def smart_match_party(scanned_name, existing_names):
@@ -292,7 +264,10 @@ def screen_home():
     total_receivable = 0
     total_payable = 0
     
+    # Calculate Totals with Stripped Names
     if not dues.empty and not pymt.empty:
+        dues["Party"] = dues["Party"].str.strip()
+        pymt["Party"] = pymt["Party"].str.strip()
         sales = dues.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         cols = pymt.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         all_cust = sales.index.union(cols.index)
@@ -301,6 +276,8 @@ def screen_home():
             if bal > 0: total_receivable += bal
             
     if not goods.empty and not supp_pay.empty:
+        goods["Supplier"] = goods["Supplier"].str.strip()
+        supp_pay["Supplier"] = supp_pay["Supplier"].str.strip()
         purchases = goods.groupby("Supplier")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         paid_out = supp_pay.groupby("Supplier")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         all_supp = purchases.index.union(paid_out.index)
@@ -341,6 +318,7 @@ def screen_day_book():
 
     def filter_by_date(df):
         if df.empty or "Date" not in df.columns: return pd.DataFrame()
+        # FIX: Robust date parsing for mixed formats (DD/MM/YYYY and YYYY-MM-DD)
         df["_dt"] = pd.to_datetime(df["Date"], errors='coerce', dayfirst=True).dt.date
         filtered = df[df["_dt"] == view_date].copy()
         return filtered.drop(columns=["_dt"])
@@ -360,30 +338,31 @@ def screen_day_book():
     m3.metric("Paid", f"₹{t_paid:,.0f}")
     st.markdown("---")
 
-    def render_section(title, df, sheet_name):
+    def render_section(title, df):
         st.markdown(f"#### {title}")
         if df.empty:
-            st.caption("No entries.")
+            st.caption("No entries found for this date.")
             return
-
-        # Explicit configuration to ensure columns show up
-        cols = {}
-        if "Amount" in df.columns: cols["Amount"] = st.column_config.NumberColumn("Amount", format="₹%.2f")
-        if "Date" in df.columns: cols["Date"] = st.column_config.TextColumn("Date")
         
-        # Link Column Check (if 5th column or explicit)
-        st.dataframe(df, column_config=cols, use_container_width=True)
+        # Display simplified table for better mobile view
+        cols = ["Party", "Amount", "Mode"] if "Mode" in df.columns else ["Party", "Amount"]
+        if "Supplier" in df.columns: cols = ["Supplier", "Amount"]
+        if "Items" in df.columns: cols = ["Supplier", "Items", "Amount"]
+        
+        # Check if columns exist
+        final_cols = [c for c in cols if c in df.columns]
+        st.dataframe(df[final_cols], use_container_width=True)
 
-    render_section("🔵 Sales (Bills)", d_sales, "CustomerDues")
-    render_section("🟢 Received (Collection)", d_received, "PaymentsReceived")
-    render_section("🔴 Paid to Suppliers", d_paid, "PaymentsToSuppliers")
-    render_section("🟠 Purchases (Goods)", d_purchases, "GoodsReceived")
+    render_section("🔵 Sales (Bills)", d_sales)
+    render_section("🟢 Payment Received (Cash/UPI)", d_received)
+    render_section("🔴 Paid to Suppliers", d_paid)
+    render_section("🟠 Purchases (Goods)", d_purchases)
 
 def screen_ledger():
     st.markdown("### 📒 Party Ledger")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
     
-    # Restore Date Range Logic
+    # Date Logic
     if 'l_s' not in st.session_state: st.session_state['l_s'] = date.today().replace(day=1)
     if 'l_e' not in st.session_state: st.session_state['l_e'] = date.today()
     
@@ -404,30 +383,23 @@ def screen_ledger():
         sel_party = extract_name_display(sel_display)
         d_df = fetch_sheet_data("CustomerDues")
         p_df = fetch_sheet_data("PaymentsReceived")
-        goods_df = fetch_sheet_data("GoodsReceived")
-        supp_pay_df = fetch_sheet_data("PaymentsToSuppliers")
         
         ledger = []
+        
+        # FIX: Ensure names are stripped for accurate matching
         if not d_df.empty:
-            sub = d_df[d_df['Party'].astype(str) == sel_party]
+            d_df["Party"] = d_df["Party"].str.strip()
+            sub = d_df[d_df['Party'] == sel_party]
             for _, r in sub.iterrows():
                 r_date = parse_date(str(r['Date']))
                 if r_date and s <= r_date <= e: ledger.append({"Date": r_date, "Desc": "Sale", "Dr": clean_amount(r['Amount']), "Cr": 0})
+        
         if not p_df.empty:
-            sub = p_df[p_df['Party'].astype(str) == sel_party]
+            p_df["Party"] = p_df["Party"].str.strip()
+            sub = p_df[p_df['Party'] == sel_party]
             for _, r in sub.iterrows():
                 r_date = parse_date(str(r['Date']))
                 if r_date and s <= r_date <= e: ledger.append({"Date": r_date, "Desc": f"Rx ({r.get('Mode','')})", "Dr": 0, "Cr": clean_amount(r['Amount'])})
-        if not goods_df.empty:
-            sub = goods_df[goods_df['Supplier'].astype(str) == sel_party]
-            for _, r in sub.iterrows():
-                r_date = parse_date(str(r['Date']))
-                if r_date and s <= r_date <= e: ledger.append({"Date": r_date, "Desc": f"Purchase ({r.get('Items','')})", "Dr": 0, "Cr": clean_amount(r['Amount'])})
-        if not supp_pay_df.empty:
-            sub = supp_pay_df[supp_pay_df['Supplier'].astype(str) == sel_party]
-            for _, r in sub.iterrows():
-                r_date = parse_date(str(r['Date']))
-                if r_date and s <= r_date <= e: ledger.append({"Date": r_date, "Desc": f"Paid Supplier ({r.get('Mode','')})", "Dr": clean_amount(r['Amount']), "Cr": 0})
         
         if ledger:
             df = pd.DataFrame(ledger).sort_values('Date')
@@ -437,7 +409,6 @@ def screen_ledger():
             status = "Receivable" if bal > 0 else "Payable"
             st.metric("Net Balance", f"₹{abs(bal):,.2f}", status)
             
-            # PDF & WhatsApp Link
             pdf_bytes = generate_pdf(sel_party, df, s, e)
             c_a, c_b = st.columns(2)
             c_a.download_button("📄 PDF", pdf_bytes, "stmt.pdf", "application/pdf", use_container_width=True)
@@ -448,27 +419,32 @@ def screen_ledger():
         else: st.info("No Transactions Found.")
 
 def screen_reminders():
-    st.markdown("### 🔔 Payment Reminders (WhatsApp)")
+    st.markdown("### 🔔 Payment Reminders")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
     
-    with st.spinner("Analyzing..."):
+    with st.spinner("Calculating Balances..."):
         dues = fetch_sheet_data("CustomerDues")
         pymt = fetch_sheet_data("PaymentsReceived")
         mapping, _ = get_master_map()
         phones = {}
         master = fetch_sheet_data("Party_Master")
         if not master.empty:
-            for _, r in master.iterrows(): phones[r["Name"]] = str(r.get("Phone", ""))
+            for _, r in master.iterrows(): phones[str(r["Name"]).strip()] = str(r.get("Phone", ""))
 
         bals = {}
+        # FIX: Unified Math Logic (Same as Home Screen)
         if not dues.empty:
-            for _, r in dues.iterrows(): bals[r["Party"]] = bals.get(r["Party"], 0) + clean_amount(r["Amount"])
+            for _, r in dues.iterrows():
+                p = str(r["Party"]).strip()
+                bals[p] = bals.get(p, 0) + clean_amount(r["Amount"])
         if not pymt.empty:
-            for _, r in pymt.iterrows(): bals[r["Party"]] = bals.get(r["Party"], 0) - clean_amount(r["Amount"])
+            for _, r in pymt.iterrows():
+                p = str(r["Party"]).strip()
+                bals[p] = bals.get(p, 0) - clean_amount(r["Amount"])
                 
         data = []
         for p, amt in bals.items():
-            if amt != 0:
+            if abs(amt) > 1: # Only show significant balances
                 code = mapping.get(p, "")
                 display = f"{p} ({code})" if code else p
                 data.append({"Party": display, "Balance": amt, "Phone": phones.get(p, "")})
@@ -502,14 +478,16 @@ def screen_reminders():
             ph = row["Phone"]
             msg = f"Hello {p_raw}, Your pending balance with Gautam Pharma is Rs {b:,.0f}. Please pay soon."
             
+            link_txt = f"📲 WhatsApp {p_raw}"
             if ph:
                 clean = re.sub(r'\D', '', str(ph))
                 if len(clean) == 10: clean = "91" + clean
                 link = f"https://wa.me/{clean}?text={urllib.parse.quote(msg)}"
-                st.link_button(f"📲 WhatsApp {p_raw}", link, use_container_width=True)
             else:
                 link = f"https://wa.me/?text={urllib.parse.quote(msg)}"
-                st.link_button(f"📲 WhatsApp {p_raw} (No Number)", link, use_container_width=True)
+                link_txt += " (No Number)"
+            
+            st.link_button(link_txt, link, use_container_width=True)
 
 def screen_scan_hub():
     st.markdown("### 📸 Scanner Hub")
@@ -685,24 +663,83 @@ def screen_manual():
             st.cache_data.clear()
 
 def screen_tools():
-    st.markdown("### ⚙️ Tools")
+    st.markdown("### ⚙️ Admin Tools")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
-    st.write("Edit Transactions (Type Date as DD/MM/YYYY)")
-    sheet = st.selectbox("Sheet", ["CustomerDues", "PaymentsReceived", "PaymentsToSuppliers", "GoodsReceived"])
-    if st.button("Load"):
-        df = fetch_sheet_data(sheet)
-        st.session_state['tool_df'] = df
-        st.session_state['tool_sheet'] = sheet
-    if 'tool_df' in st.session_state:
-        df = st.session_state['tool_df']
-        df["Date"] = df["Date"].astype(str)
-        edited = st.data_editor(df, num_rows="dynamic")
-        if st.button("Save Changes"):
+    
+    tab1, tab2, tab3, tab4 = st.tabs(["🔄 Merge", "✏️ Edit Txn", "📇 Party & Codes", "🧨 Reset"])
+    
+    with tab1:
+        st.write("Combine two parties.")
+        parties = get_all_party_names_display()
+        c1, c2 = st.columns(2)
+        old = c1.selectbox("Wrong Name", parties, index=None, placeholder="Search...")
+        new = c2.selectbox("Correct Name", parties, index=None, placeholder="Search...")
+        if st.button("Merge") and old and new:
+            old_raw = extract_name_display(old)
+            new_raw = extract_name_display(new)
             sh = get_sheet_object()
-            ws = sh.worksheet(st.session_state['tool_sheet'])
+            count = 0
+            for s in ["CustomerDues", "PaymentsReceived", "PaymentsToSuppliers", "GoodsReceived"]:
+                try:
+                    ws = sh.worksheet(s)
+                    vals = ws.get_all_values()
+                    head = vals[0]
+                    col = -1
+                    if "Party" in head: col = head.index("Party")
+                    elif "Supplier" in head: col = head.index("Supplier")
+                    if col != -1:
+                        ups = []
+                        for i, r in enumerate(vals):
+                            if i>0 and r[col] == old_raw:
+                                ups.append({"range": f"{chr(65+col)}{i+1}", "values": [[new_raw]]})
+                                count += 1
+                        if ups: ws.batch_update(ups)
+                except: pass
+            st.toast(f"Merged {count} entries!")
+            st.cache_data.clear()
+
+    with tab2:
+        st.write("### Edit Transactions")
+        sheet = st.selectbox("Sheet", ["CustomerDues", "PaymentsReceived", "PaymentsToSuppliers", "GoodsReceived"])
+        if st.button("Load Data"):
+            df = fetch_sheet_data(sheet)
+            st.session_state['tool_df'] = df
+            st.session_state['tool_sheet'] = sheet
+            
+        if 'tool_df' in st.session_state:
+            df = st.session_state['tool_df']
+            df["Date"] = df["Date"].astype(str)
+            edited = st.data_editor(df, num_rows="dynamic", column_config={"Date": st.column_config.TextColumn("Date", help="DD/MM/YYYY")})
+            if st.button("💾 Save Changes"):
+                sh = get_sheet_object()
+                ws = sh.worksheet(st.session_state['tool_sheet'])
+                ws.clear()
+                ws.update([edited.columns.tolist()] + edited.astype(str).values.tolist())
+                st.toast("Updated!")
+
+    with tab3:
+        st.write("Edit Codes, Phones & Addresses.")
+        df_master = fetch_sheet_data("Party_Master")
+        edited = st.data_editor(df_master, num_rows="dynamic")
+        if st.button("Save Master"):
+            sh = get_sheet_object()
+            ws = sh.worksheet("Party_Master")
             ws.clear()
             ws.update([edited.columns.tolist()] + edited.astype(str).values.tolist())
-            st.toast("Updated!")
+            st.toast("Saved Master List!")
+
+    with tab4:
+        st.error("⚠️ FACTORY RESET")
+        if st.button("🧨 Delete All", disabled=(st.text_input("Type WIPE DATA") != "WIPE DATA")):
+            sh = get_sheet_object()
+            sheets = {"CustomerDues": ["Date","Party","Amount"], "PaymentsReceived": ["Date","Party","Amount","Mode"], 
+                      "PaymentsToSuppliers": ["Date","Supplier","Amount","Mode"], "GoodsReceived": ["Date","Supplier","Items","Amount"],
+                      "Party_Master": ["Name","Code","Type","Phone","Address"]}
+            for s, h in sheets.items():
+                try: ws = sh.worksheet(s); ws.clear(); ws.update(range_name="A1", values=[h])
+                except: pass
+            st.toast("Reset Complete!")
+            time.sleep(2); st.rerun()
 
 # --- MAIN ---
 show_splash_screen()
