@@ -15,28 +15,46 @@ import time
 import re
 from PIL import Image
 import io
+from streamlit_mic_recorder import mic_recorder
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Gautam Pharma", layout="centered", page_icon="💊")
 
-# --- CUSTOM CSS ---
+# --- CUSTOM CSS: GLASSMORPHISM & SMOOTH UI ---
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; color: #e0e0e0; }
+    
+    /* Cards */
     div[data-testid="metric-container"] {
         background: linear-gradient(145deg, #1e1e1e, #252525);
         border: 1px solid #333; padding: 15px; border-radius: 15px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        transition: transform 0.2s;
     }
+    div[data-testid="metric-container"]:hover {
+        transform: translateY(-3px); border-color: #444;
+    }
+    
+    /* Buttons */
     .stButton>button {
-        width: 100%; height: 3.5em; 
+        width: 100%; height: 3.8em; 
         background: linear-gradient(135deg, #262730 0%, #1e1e1e 100%);
         color: white; border: 1px solid #404040; border-radius: 12px; font-weight: 600;
+        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
     }
     .stButton>button:hover {
         background: linear-gradient(135deg, #2979ff 0%, #1565c0 100%);
         border-color: #2979ff; transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(41, 121, 255, 0.3);
     }
+    
+    /* Inputs */
+    .stTextInput>div>div>input, .stDateInput>div>div>input, .stSelectbox>div>div>div {
+        background-color: #1a1c24; border-radius: 8px; border: 1px solid #333;
+    }
+
+    /* Splash */
     .splash-container {
         display: flex; justify-content: center; align-items: center;
         height: 70vh; flex-direction: column; animation: fadeOut 3s forwards;
@@ -103,15 +121,10 @@ def fetch_sheet_data(sheet_name):
         if not sh: return pd.DataFrame()
         data = sh.worksheet(sheet_name).get_all_records()
         df = pd.DataFrame(data)
-        
-        # --- CRITICAL FIX: CLEAN COLUMN NAMES ---
-        # This removes invisible spaces from headers (e.g. "Date " -> "Date")
+        # CLEAN COLUMN NAMES & DATA
         df.columns = [str(c).strip() for c in df.columns]
-        
-        # Clean Party Names immediately to fix mismatch errors
         if "Party" in df.columns: df["Party"] = df["Party"].astype(str).str.strip()
         if "Supplier" in df.columns: df["Supplier"] = df["Supplier"].astype(str).str.strip()
-        
         return df
     except: return pd.DataFrame()
 
@@ -269,9 +282,9 @@ def screen_home():
     total_receivable = 0
     total_payable = 0
     
-    # Calculate Totals
     if not dues.empty and not pymt.empty:
-        # Use strip() to ensure keys match
+        dues["Party"] = dues["Party"].str.strip()
+        pymt["Party"] = pymt["Party"].str.strip()
         sales = dues.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         cols = pymt.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         all_cust = sales.index.union(cols.index)
@@ -280,6 +293,8 @@ def screen_home():
             if bal > 0: total_receivable += bal
             
     if not goods.empty and not supp_pay.empty:
+        goods["Supplier"] = goods["Supplier"].str.strip()
+        supp_pay["Supplier"] = supp_pay["Supplier"].str.strip()
         purchases = goods.groupby("Supplier")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         paid_out = supp_pay.groupby("Supplier")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         all_supp = purchases.index.union(paid_out.index)
@@ -296,15 +311,18 @@ def screen_home():
     st.metric("Net Position", f"₹{net:,.0f}")
     st.markdown("---")
     
-    c1, c2, c3 = st.columns(3)
+    # 4-Column Layout for better Mobile Access
+    c1, c2, c3, c4 = st.columns(4)
     if c1.button("📝\nEntry"): go_to('manual')
-    if c2.button("📅\nDay Book"): go_to('day_book')
+    if c2.button("📅\nDayBook"): go_to('day_book')
     if c3.button("📒\nLedger"): go_to('ledger')
+    if c4.button("🎙️\nVoice"): go_to('voice')
     
-    c4, c5, c6 = st.columns(3)
-    if c4.button("📸\nScan"): go_to('scan_hub')
-    if c5.button("🔔\nRemind"): go_to('reminders')
-    if c6.button("⚙️\nTools"): go_to('tools')
+    c5, c6, c7, c8 = st.columns(4)
+    if c5.button("📸\nScan"): go_to('scan_hub')
+    if c6.button("🔔\nRemind"): go_to('reminders')
+    if c7.button("⚙️\nTools"): go_to('tools')
+    if c8.button("🔄\nSync"): st.cache_data.clear(); st.rerun()
 
 def screen_day_book():
     st.markdown("### 📅 Day Book (Roznamcha)")
@@ -318,12 +336,8 @@ def screen_day_book():
         paid = fetch_sheet_data("PaymentsToSuppliers")
         purchases = fetch_sheet_data("GoodsReceived")
 
-    # --- CRITICAL FIX: Robust Date Matching ---
-    # This matches the Ledger logic exactly (parsing row-by-row)
-    # instead of vectorized pandas which might fail on one bad row.
     def robust_filter(df):
         if df.empty or "Date" not in df.columns: return pd.DataFrame()
-        
         mask = []
         for d_str in df["Date"]:
             p_d = parse_date(str(d_str))
@@ -352,12 +366,10 @@ def screen_day_book():
             st.caption("No entries found.")
             return
         
-        # Display selected columns only
         cols = ["Party", "Amount", "Mode"]
         if "Supplier" in df.columns: cols = ["Supplier", "Amount", "Mode"]
         if "Items" in df.columns: cols = ["Supplier", "Items", "Amount"]
         
-        # Filter columns that actually exist
         final_cols = [c for c in cols if c in df.columns]
         st.dataframe(df[final_cols], use_container_width=True)
 
@@ -370,6 +382,16 @@ def screen_ledger():
     st.markdown("### 📒 Party Ledger")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
     
+    # Auto-Select if coming from Voice
+    default_index = None
+    if 'voice_ledger_party' in st.session_state:
+        all_p = get_all_party_names_display()
+        p_name = st.session_state.pop('voice_ledger_party')
+        match = smart_match_party(p_name, [extract_name_display(x) for x in all_p])
+        for i, option in enumerate(all_p):
+            if match in option:
+                default_index = i; break
+
     if 'l_s' not in st.session_state: st.session_state['l_s'] = date.today().replace(day=1)
     if 'l_e' not in st.session_state: st.session_state['l_e'] = date.today()
     
@@ -384,24 +406,25 @@ def screen_ledger():
     s = d1.date_input("From", st.session_state['l_s'])
     e = d2.date_input("To", st.session_state['l_e'])
     
-    sel_display = st.selectbox("Select Party", get_all_party_names_display(), index=None, placeholder="Search...")
+    sel_display = st.selectbox("Select Party", get_all_party_names_display(), index=default_index, placeholder="Search...")
+    auto_run = True if default_index is not None else False
     
-    if st.button("🔎 Show Statement", type="primary") and sel_display:
+    if (st.button("🔎 Show Statement", type="primary") or auto_run) and sel_display:
         sel_party = extract_name_display(sel_display)
         d_df = fetch_sheet_data("CustomerDues")
         p_df = fetch_sheet_data("PaymentsReceived")
         
         ledger = []
-        
-        # FIX: Ensure matching handles stripping
         if not d_df.empty:
-            sub = d_df[d_df['Party'].astype(str).str.strip() == sel_party]
+            d_df["Party"] = d_df["Party"].str.strip()
+            sub = d_df[d_df['Party'] == sel_party]
             for _, r in sub.iterrows():
                 r_date = parse_date(str(r['Date']))
                 if r_date and s <= r_date <= e: ledger.append({"Date": r_date, "Desc": "Sale", "Dr": clean_amount(r['Amount']), "Cr": 0})
         
         if not p_df.empty:
-            sub = p_df[p_df['Party'].astype(str).str.strip() == sel_party]
+            p_df["Party"] = p_df["Party"].str.strip()
+            sub = p_df[p_df['Party'] == sel_party]
             for _, r in sub.iterrows():
                 r_date = parse_date(str(r['Date']))
                 if r_date and s <= r_date <= e: ledger.append({"Date": r_date, "Desc": f"Rx ({r.get('Mode','')})", "Dr": 0, "Cr": clean_amount(r['Amount'])})
@@ -417,7 +440,6 @@ def screen_ledger():
             pdf_bytes = generate_pdf(sel_party, df, s, e)
             c_a, c_b = st.columns(2)
             c_a.download_button("📄 PDF", pdf_bytes, "stmt.pdf", "application/pdf", use_container_width=True)
-            
             msg = f"Hello {sel_party}, Balance: {bal}"
             enc_msg = urllib.parse.quote(msg)
             c_b.link_button("💬 WhatsApp", f"https://wa.me/?text={enc_msg}", use_container_width=True)
@@ -481,7 +503,6 @@ def screen_reminders():
             b = row["Balance"]
             ph = row["Phone"]
             msg = f"Hello {p_raw}, Your pending balance with Gautam Pharma is Rs {b:,.0f}. Please pay soon."
-            
             link_txt = f"📲 WhatsApp {p_raw}"
             if ph:
                 clean = re.sub(r'\D', '', str(ph))
@@ -490,7 +511,6 @@ def screen_reminders():
             else:
                 link = f"https://wa.me/?text={urllib.parse.quote(msg)}"
                 link_txt += " (No Number)"
-            
             st.link_button(link_txt, link, use_container_width=True)
 
 def screen_scan_hub():
@@ -642,6 +662,49 @@ def screen_scan_hub():
                     st.toast(f"Saved to {p_clean}!")
                     del st.session_state['scan_data']; st.rerun()
 
+def screen_voice_assistant():
+    st.markdown("### 🎙️ AI Voice Assistant")
+    if st.button("🏠 Home", use_container_width=True): go_to('home')
+    st.info("Tap the microphone to speak. Examples:\n- 'Received 500 from Ravi'\n- 'Show ledger for Shiva Drug'")
+    
+    audio = mic_recorder(start_prompt="🎤 Start Recording", stop_prompt="⏹️ Stop", key='recorder')
+    if audio:
+        st.success("Processing...")
+        try:
+            api_key = st.secrets["OPENAI_API_KEY"]
+            client = OpenAI(api_key=api_key)
+            audio_bio = io.BytesIO(audio['bytes'])
+            audio_bio.name = "voice.wav"
+            
+            transcript = client.audio.transcriptions.create(model="whisper-1", file=audio_bio).text
+            st.chat_message("user").write(f"🗣️ You said: **'{transcript}'**")
+            
+            prompt = f"""Analyze voice command: "{transcript}". Available Parties: {', '.join(list(get_master_map()[0].keys()))}. Return JSON: "intent" (entry_sale, entry_payment, view_ledger, navigate_daybook), "data" {{ "Party": "", "Amount": 0, "Mode": "", "Date": "YYYY-MM-DD" }}"""
+            response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
+            result = extract_json_from_text(response.choices[0].message.content)
+            
+            if result:
+                intent = result.get("intent")
+                data = result.get("data", {})
+                
+                if intent == "navigate_daybook": go_to('day_book')
+                elif intent == "view_ledger":
+                    st.session_state['voice_ledger_party'] = data.get("Party")
+                    go_to('ledger')
+                elif intent in ["entry_sale", "entry_payment"]:
+                    st.write("### ✅ Confirm")
+                    with st.form("voice_save"):
+                        dt = st.date_input("Date", date.today())
+                        par = st.text_input("Party", value=data.get("Party", ""))
+                        amt = st.number_input("Amount", value=float(data.get("Amount", 0)))
+                        rem = st.text_input("Mode", value=data.get("Mode", ""))
+                        if st.form_submit_button("Save"):
+                            sh = get_sheet_object()
+                            if intent == "entry_sale": sh.worksheet("CustomerDues").append_row([str(dt), par, amt])
+                            else: sh.worksheet("PaymentsReceived").append_row([str(dt), par, amt, rem])
+                            st.toast("Saved!"); time.sleep(1); go_to('home')
+        except Exception as e: st.error(str(e))
+
 def screen_manual():
     st.markdown("### 📝 New Entry")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
@@ -757,3 +820,4 @@ elif st.session_state['page'] == 'ledger': screen_ledger()
 elif st.session_state['page'] == 'scan_hub': screen_scan_hub()
 elif st.session_state['page'] == 'reminders': screen_reminders()
 elif st.session_state['page'] == 'tools': screen_tools()
+elif st.session_state['page'] == 'voice': screen_voice_assistant()
