@@ -6,3 +6,4 @@ openai
 fpdf
 google-api-python-client
 Pillow
+streamlit-mic-recorder
