@@ -121,10 +121,15 @@ def fetch_sheet_data(sheet_name):
         if not sh: return pd.DataFrame()
         data = sh.worksheet(sheet_name).get_all_records()
         df = pd.DataFrame(data)
-        # CLEAN COLUMN NAMES & DATA
+        
+        # --- DATA CLEANING (Fixes "Missing Payments" Bug) ---
+        # 1. Strip whitespace from column headers (e.g. "Date " -> "Date")
         df.columns = [str(c).strip() for c in df.columns]
+        
+        # 2. Strip whitespace from Party names to ensure they match Ledger
         if "Party" in df.columns: df["Party"] = df["Party"].astype(str).str.strip()
         if "Supplier" in df.columns: df["Supplier"] = df["Supplier"].astype(str).str.strip()
+        
         return df
     except: return pd.DataFrame()
 
@@ -283,8 +288,6 @@ def screen_home():
     total_payable = 0
     
     if not dues.empty and not pymt.empty:
-        dues["Party"] = dues["Party"].str.strip()
-        pymt["Party"] = pymt["Party"].str.strip()
         sales = dues.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         cols = pymt.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         all_cust = sales.index.union(cols.index)
@@ -293,8 +296,6 @@ def screen_home():
             if bal > 0: total_receivable += bal
             
     if not goods.empty and not supp_pay.empty:
-        goods["Supplier"] = goods["Supplier"].str.strip()
-        supp_pay["Supplier"] = supp_pay["Supplier"].str.strip()
         purchases = goods.groupby("Supplier")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         paid_out = supp_pay.groupby("Supplier")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         all_supp = purchases.index.union(paid_out.index)
@@ -311,7 +312,7 @@ def screen_home():
     st.metric("Net Position", f"₹{net:,.0f}")
     st.markdown("---")
     
-    # 4-Column Layout for better Mobile Access
+    # 4-Column Grid for Buttons
     c1, c2, c3, c4 = st.columns(4)
     if c1.button("📝\nEntry"): go_to('manual')
     if c2.button("📅\nDayBook"): go_to('day_book')
@@ -336,6 +337,7 @@ def screen_day_book():
         paid = fetch_sheet_data("PaymentsToSuppliers")
         purchases = fetch_sheet_data("GoodsReceived")
 
+    # CRITICAL FIX: Robust filtering
     def robust_filter(df):
         if df.empty or "Date" not in df.columns: return pd.DataFrame()
         mask = []
@@ -366,10 +368,10 @@ def screen_day_book():
             st.caption("No entries found.")
             return
         
+        # Display available columns safely
         cols = ["Party", "Amount", "Mode"]
         if "Supplier" in df.columns: cols = ["Supplier", "Amount", "Mode"]
         if "Items" in df.columns: cols = ["Supplier", "Items", "Amount"]
-        
         final_cols = [c for c in cols if c in df.columns]
         st.dataframe(df[final_cols], use_container_width=True)
 
@@ -382,15 +384,14 @@ def screen_ledger():
     st.markdown("### 📒 Party Ledger")
     if st.button("🏠 Home", use_container_width=True): go_to('home')
     
-    # Auto-Select if coming from Voice
+    # Check if voice sent us here
     default_index = None
     if 'voice_ledger_party' in st.session_state:
         all_p = get_all_party_names_display()
         p_name = st.session_state.pop('voice_ledger_party')
         match = smart_match_party(p_name, [extract_name_display(x) for x in all_p])
         for i, option in enumerate(all_p):
-            if match in option:
-                default_index = i; break
+            if match in option: default_index = i; break
 
     if 'l_s' not in st.session_state: st.session_state['l_s'] = date.today().replace(day=1)
     if 'l_e' not in st.session_state: st.session_state['l_e'] = date.today()
@@ -416,14 +417,12 @@ def screen_ledger():
         
         ledger = []
         if not d_df.empty:
-            d_df["Party"] = d_df["Party"].str.strip()
             sub = d_df[d_df['Party'] == sel_party]
             for _, r in sub.iterrows():
                 r_date = parse_date(str(r['Date']))
                 if r_date and s <= r_date <= e: ledger.append({"Date": r_date, "Desc": "Sale", "Dr": clean_amount(r['Amount']), "Cr": 0})
         
         if not p_df.empty:
-            p_df["Party"] = p_df["Party"].str.strip()
             sub = p_df[p_df['Party'] == sel_party]
             for _, r in sub.iterrows():
                 r_date = parse_date(str(r['Date']))
@@ -440,6 +439,7 @@ def screen_ledger():
             pdf_bytes = generate_pdf(sel_party, df, s, e)
             c_a, c_b = st.columns(2)
             c_a.download_button("📄 PDF", pdf_bytes, "stmt.pdf", "application/pdf", use_container_width=True)
+            
             msg = f"Hello {sel_party}, Balance: {bal}"
             enc_msg = urllib.parse.quote(msg)
             c_b.link_button("💬 WhatsApp", f"https://wa.me/?text={enc_msg}", use_container_width=True)
@@ -527,6 +527,9 @@ def screen_scan_hub():
                 compressed = compress_image(img)
                 link = upload_to_drive(compressed, f"Journal_{date.today()}.jpg")
             
+            # --- CRITICAL FIX: Reset File Pointer ---
+            img.seek(0)
+            
             prompt = """Analyze daily journal page. Extract Date. Map entries to: CustomerDues, PaymentsReceived, GoodsReceived, PaymentsToSuppliers.
             Return JSON: { "Date": "YYYY-MM-DD", "CustomerDues": [{"Party": "Name", "Amount": 0}], "PaymentsReceived": [{"Party": "Name", "Amount": 0, "Mode": "Cash"}], ... }"""
             with st.spinner("AI Reading..."):
@@ -541,6 +544,7 @@ def screen_scan_hub():
         st.info("Digitize a full page of an old ledger.")
         img = st.file_uploader("Ledger Image", type=['jpg','png'], key="l_upl")
         if img and st.button("Process Ledger"):
+            img.seek(0) # Fix
             prompt = """Analyze SINGLE PARTY ledger. Find Party Name, Opening Balance. Extract Transactions table.
             Return JSON: {"PartyName": "Name", "OpeningBalance": 0.0, "Transactions": [{"Date": "YYYY-MM-DD", "Particulars": "Desc", "Debit": 0.0, "Credit": 0.0}]}"""
             with st.spinner("AI Reading..."):
@@ -557,7 +561,7 @@ def screen_scan_hub():
             with st.spinner("Compressing & Uploading..."):
                 compressed = compress_image(img)
                 link = upload_to_drive(compressed, f"Bank_{date.today()}.jpg")
-                
+            img.seek(0) # Fix
             prompt = """Analyze Bank Receipt. Extract: Date, Amount, Sender Name/Party, Remarks.
             Return JSON: {"Date": "YYYY-MM-DD", "Amount": 0.0, "Sender": "Name", "Remarks": "Text"}"""
             with st.spinner("Checking..."):
@@ -575,7 +579,7 @@ def screen_scan_hub():
             with st.spinner("Compressing & Uploading..."):
                 compressed = compress_image(img)
                 link = upload_to_drive(compressed, f"Bill_{date.today()}.jpg")
-                
+            img.seek(0) # Fix
             prompt = """Analyze Purchase Bill. 
             1. Identify the 'Billed To' or 'Party' name. 
             2. Look for handwritten remarks/pen marks for special instructions.
@@ -606,184 +610,6 @@ def screen_scan_hub():
             if st.button("Save Journal (Simplified)"):
                 st.toast("Saved!")
                 del st.session_state['scan_data']; st.rerun()
-
-        elif mode == 'ledger':
-            scanned = data.get("PartyName", "")
-            final_raw = smart_match_party(scanned, list(mapping.keys()))
-            st.write(f"Party: **{final_raw}**")
-            df = pd.DataFrame(data.get("Transactions", []))
-            df["Date"] = df["Date"].astype(str)
-            edited = st.data_editor(df, num_rows="dynamic", column_config={"Date": st.column_config.TextColumn("Date", help="DD/MM/YYYY")})
-            if st.button("Save Ledger"):
-                st.toast("Saved!")
-                del st.session_state['scan_data']; st.rerun()
-
-        elif mode == 'bank':
-            b_date = parse_date(data.get("Date"))
-            b_amt = float(data.get("Amount", 0))
-            b_sender = data.get("Sender", "Unknown")
-            st.write(f"**Detected:** {b_sender} | ₹{b_amt} | {b_date}")
-            exist_df = fetch_sheet_data("PaymentsReceived")
-            if not exist_df.empty:
-                exist_df["_dt"] = pd.to_datetime(exist_df["Date"], errors='coerce').dt.date
-                match = exist_df[(exist_df["_dt"] == b_date) & (exist_df["Amount"].apply(clean_amount) == b_amt)]
-                if not match.empty:
-                    st.error("⚠️ Possible Duplicate Found!")
-                    st.dataframe(match)
-            target_party = st.selectbox("Map to Party", all_parties, index=None)
-            if st.button("Save Receipt"):
-def screen_scan_hub():
-    st.markdown("### 📸 Scanner Hub")
-    if st.button("🏠 Home", use_container_width=True): go_to('home')
-    
-    tab1, tab2, tab3, tab4 = st.tabs(["Daily Journal", "Old Ledger", "Bank Receipt", "Bill/Invoice"])
-    
-    with tab1:
-        st.info("Upload your daily handwritten page.")
-        img = st.file_uploader("Journal Image", type=['jpg','png'], key="j_upl")
-        if img and st.button("Process Journal"):
-            # 1. Compress & Upload
-            with st.spinner("Compressing & Uploading..."):
-                compressed = compress_image(img)
-                link = upload_to_drive(compressed, f"Journal_{date.today()}.jpg")
-            
-            # 2. CRITICAL FIX: Rewind the file pointer to the start!
-            img.seek(0) 
-            
-            # 3. AI Analysis
-            prompt = """Analyze daily journal page. Extract Date. Map entries to: CustomerDues, PaymentsReceived, GoodsReceived, PaymentsToSuppliers.
-            Return JSON: { "Date": "YYYY-MM-DD", "CustomerDues": [{"Party": "Name", "Amount": 0}], "PaymentsReceived": [{"Party": "Name", "Amount": 0, "Mode": "Cash"}], "PaymentsToSuppliers": [{"Supplier": "Name", "Amount": 0, "Mode": "Cash"}], "GoodsReceived": [{"Supplier": "Name", "Items": "Desc", "Amount": 0}] }"""
-            
-            with st.spinner("AI Reading..."):
-                data = analyze_image_generic(prompt, img.read())
-                if data: 
-                    st.session_state['scan_data'] = data
-                    st.session_state['scan_link'] = link
-                    st.session_state['scan_mode'] = 'journal'
-                    st.rerun()
-                else:
-                    st.error("AI could not read the image. Please try again.")
-
-    with tab2:
-        st.info("Digitize a full page of an old ledger.")
-        img = st.file_uploader("Ledger Image", type=['jpg','png'], key="l_upl")
-        if img and st.button("Process Ledger"):
-            with st.spinner("AI Reading..."):
-                prompt = """Analyze SINGLE PARTY ledger. Find Party Name, Opening Balance. Extract Transactions table.
-                Return JSON: {"PartyName": "Name", "OpeningBalance": 0.0, "Transactions": [{"Date": "YYYY-MM-DD", "Particulars": "Desc", "Debit": 0.0, "Credit": 0.0}]}"""
-                data = analyze_image_generic(prompt, img.read())
-                if data: 
-                    st.session_state['scan_data'] = data
-                    st.session_state['scan_mode'] = 'ledger'
-                    st.rerun()
-
-    with tab3:
-        st.info("Check Bank Receipts for Duplicate Entries.")
-        img = st.file_uploader("Receipt Image", type=['jpg','png'], key="b_upl")
-        if img and st.button("Process Receipt"):
-            with st.spinner("Compressing & Uploading..."):
-                compressed = compress_image(img)
-                link = upload_to_drive(compressed, f"Bank_{date.today()}.jpg")
-            
-            # CRITICAL FIX: Rewind here too
-            img.seek(0)
-                
-            prompt = """Analyze Bank Receipt. Extract: Date, Amount, Sender Name/Party, Remarks.
-            Return JSON: {"Date": "YYYY-MM-DD", "Amount": 0.0, "Sender": "Name", "Remarks": "Text"}"""
-            with st.spinner("Checking..."):
-                data = analyze_image_generic(prompt, img.read())
-                if data: 
-                    st.session_state['scan_data'] = data
-                    st.session_state['scan_link'] = link
-                    st.session_state['scan_mode'] = 'bank'
-                    st.rerun()
-
-    with tab4:
-        st.info("Smart Bill Entry: Detects handwritten notes & Party Mapping.")
-        img = st.file_uploader("Bill Image", type=['jpg','png'], key="bill_upl")
-        if img and st.button("Process Bill"):
-            with st.spinner("Compressing & Uploading..."):
-                compressed = compress_image(img)
-                link = upload_to_drive(compressed, f"Bill_{date.today()}.jpg")
-            
-            # CRITICAL FIX: Rewind here too
-            img.seek(0)
-                
-            prompt = """Analyze Purchase Bill. 
-            1. Identify the 'Billed To' or 'Party' name. 
-            2. Look for handwritten remarks/pen marks for special instructions.
-            3. Extract Date and Total Amount.
-            Return JSON: {"Party": "Name", "Date": "YYYY-MM-DD", "Amount": 0.0, "Remarks": "Text"}"""
-            with st.spinner("Reading Bill..."):
-                data = analyze_image_generic(prompt, img.read())
-                if data: 
-                    st.session_state['scan_data'] = data
-                    st.session_state['scan_link'] = link
-                    st.session_state['scan_mode'] = 'bill'
-                    st.rerun()
-
-    # --- RESULT PROCESSING ---
-    if 'scan_data' in st.session_state:
-        data = st.session_state['scan_data']
-        mode = st.session_state['scan_mode']
-        link = st.session_state.get('scan_link', "")
-        
-        st.divider()
-        st.subheader("✅ Review & Save")
-        if link: st.caption(f"Image Saved to Cloud: {link}")
-        
-        mapping, codes_list = get_master_map()
-        all_parties = get_all_party_names_display()
-        
-        if mode == 'journal':
-            # --- JOURNAL REVIEW UI ---
-            st.write("### 1. Sales (Bills)")
-            s_df = pd.DataFrame(data.get("CustomerDues", []))
-            s_ed = st.data_editor(s_df, num_rows="dynamic", key="j_s")
-            
-            st.write("### 2. Payments Received")
-            p_df = pd.DataFrame(data.get("PaymentsReceived", []))
-            p_ed = st.data_editor(p_df, num_rows="dynamic", key="j_p")
-            
-            st.write("### 3. Supplier Payments")
-            sp_df = pd.DataFrame(data.get("PaymentsToSuppliers", []))
-            sp_ed = st.data_editor(sp_df, num_rows="dynamic", key="j_sp")
-            
-            st.write("### 4. Goods Purchases")
-            g_df = pd.DataFrame(data.get("GoodsReceived", []))
-            g_ed = st.data_editor(g_df, num_rows="dynamic", key="j_g")
-
-            if st.button("💾 Save Journal Data"):
-                sh = get_sheet_object()
-                dt = data.get("Date", str(date.today()))
-                
-                # Helper to append rows safely
-                def safe_append(ws_name, rows):
-                    if rows: sh.worksheet(ws_name).append_rows(rows)
-
-                # Process Sales
-                if not s_ed.empty:
-                    rows = [[dt, r.get("Party"), clean_amount(r.get("Amount"))] for _, r in s_ed.iterrows()]
-                    safe_append("CustomerDues", rows)
-                
-                # Process Payments
-                if not p_ed.empty:
-                    rows = [[dt, r.get("Party"), clean_amount(r.get("Amount")), r.get("Mode","")] for _, r in p_ed.iterrows()]
-                    safe_append("PaymentsReceived", rows)
-                    
-                # Process Supplier Payments
-                if not sp_ed.empty:
-                    rows = [[dt, r.get("Supplier"), clean_amount(r.get("Amount")), r.get("Mode","")] for _, r in sp_ed.iterrows()]
-                    safe_append("PaymentsToSuppliers", rows)
-                    
-                # Process Goods
-                if not g_ed.empty:
-                    rows = [[dt, r.get("Supplier"), r.get("Items",""), clean_amount(r.get("Amount"))] for _, r in g_ed.iterrows()]
-                    safe_append("GoodsReceived", rows)
-
-                st.toast("Journal Saved Successfully!")
-                del st.session_state['scan_data']
-                st.rerun()
 
         elif mode == 'ledger':
             scanned = data.get("PartyName", "")
@@ -999,4 +825,3 @@ elif st.session_state['page'] == 'scan_hub': screen_scan_hub()
 elif st.session_state['page'] == 'reminders': screen_reminders()
 elif st.session_state['page'] == 'tools': screen_tools()
 elif st.session_state['page'] == 'voice': screen_voice_assistant()
-
