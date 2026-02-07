@@ -52,7 +52,6 @@ st.markdown("""
         color: #000000 !important;
         border: 1px solid #ccc !important;
     }
-    /* Fix Dropdown Menu Items */
     ul[data-baseweb="menu"] { background-color: #ffffff !important; }
     li[data-baseweb="option"] { color: #000000 !important; }
 
@@ -63,7 +62,6 @@ st.markdown("""
         border: 1px solid #ccc !important;
         font-weight: bold !important;
     }
-    /* Primary Button (Red) */
     div[data-testid="stVerticalBlock"] > div > div > div > div > button[kind="primary"] {
         background-color: #d32f2f !important;
         color: #ffffff !important;
@@ -74,8 +72,7 @@ st.markdown("""
     div[data-testid="stFileUploader"] {
         background-color: #ffffff !important;
         border: 1px dashed #aaa !important;
-        padding: 10px;
-        border-radius: 8px;
+        padding: 10px; border-radius: 8px;
     }
     div[data-testid="stFileUploader"] span { color: #000 !important; }
     div[data-testid="stFileUploader"] small { color: #333 !important; }
@@ -101,11 +98,42 @@ st.markdown("""
     }
     div[data-testid="metric-container"] label { color: #555 !important; }
     div[data-testid="metric-container"] div { color: #000 !important; }
-    
+
+    /* 8. SPLASH SCREEN (Updated for White Theme) */
+    .splash-container {
+        display: flex; justify-content: center; align-items: center;
+        height: 70vh; flex-direction: column; animation: fadeOut 2.5s forwards;
+    }
+    .splash-container img {
+        width: 150px; margin-bottom: 20px; border-radius: 20px;
+        box-shadow: 0 0 40px rgba(41, 121, 255, 0.25);
+    }
+    @keyframes fadeOut {
+        0% { opacity: 0; transform: scale(0.8); }
+        20% { opacity: 1; transform: scale(1); }
+        80% { opacity: 1; transform: scale(1); }
+        100% { opacity: 0; transform: scale(1.1); }
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 1. CONNECTORS & UTILS ---
+# --- 1. CRITICAL FUNCTIONS ---
+def show_splash_screen():
+    if "splash_shown" not in st.session_state:
+        splash = st.empty()
+        with splash.container():
+            logo_url = "https://raw.githubusercontent.com/gautam-pharma-ledger/ledger-app/main/Photoroom-20260102_114853282.png"
+            # Updated Text Color to #2c3e50 (Dark Blue) so it shows on white bg
+            st.markdown(f"""
+            <div class="splash-container">
+                <img src="{logo_url}">
+                <div style="font-size: 26px; color: #2c3e50; font-weight: 700;">Gautam Pharma</div>
+            </div>""", unsafe_allow_html=True)
+            time.sleep(2.5)
+        splash.empty()
+        st.session_state["splash_shown"] = True
+
+# --- 2. CONNECTORS & UTILS ---
 @st.cache_resource
 def get_credentials():
     try:
@@ -144,7 +172,6 @@ def fetch_sheet_data(sheet_name):
         headers = data.pop(0)
         df = pd.DataFrame(data, columns=headers)
         
-        # Clean Data
         df.replace("", pd.NA, inplace=True)
         df.dropna(how='all', inplace=True)
         df.fillna("", inplace=True)
@@ -634,6 +661,9 @@ def screen_tools():
 # --- MAIN APP LOGIC ---
 try:
     if 'page' not in st.session_state: st.session_state.page = 'home'
+    
+    # 🚀 ANIMATION TRIGGER IS HERE
+    show_splash_screen()
     
     if st.session_state.page == 'home': screen_home()
     elif st.session_state.page == 'manual': screen_manual()
