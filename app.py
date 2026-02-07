@@ -37,8 +37,10 @@ st.set_page_config(page_title="Gautam Pharma", layout="centered", page_icon="ðŸ’
 # --- CUSTOM CSS: FORCE VISIBILITY (DARK MODE PROOF) ---
 st.markdown("""
     <style>
+    /* 1. FORCE Main Background & Text */
     .stApp { background-color: #f4f7f6 !important; color: #000000 !important; }
     
+    /* 2. FORCE Tabs Visibility */
     button[data-baseweb="tab"] {
         background-color: #ffffff !important; color: #000000 !important;
         border: 1px solid #ddd !important; font-weight: 600 !important;
@@ -48,6 +50,7 @@ st.markdown("""
         border-color: #1565c0 !important;
     }
 
+    /* 3. FORCE Inputs (Date, Text, Select) to be White with Black Text */
     .stTextInput input, .stDateInput input, .stSelectbox div[data-baseweb="select"] {
         background-color: #ffffff !important; color: #000000 !important;
         border: 1px solid #ccc !important;
@@ -55,6 +58,7 @@ st.markdown("""
     ul[data-baseweb="menu"] { background-color: #ffffff !important; }
     li[data-baseweb="option"] { color: #000000 !important; }
 
+    /* 4. FORCE Buttons */
     .stButton > button {
         background-color: #ffffff !important; color: #000000 !important;
         border: 1px solid #ccc !important; font-weight: bold !important;
@@ -63,6 +67,7 @@ st.markdown("""
         background-color: #d32f2f !important; color: #ffffff !important; border: none !important;
     }
 
+    /* 5. FORCE File Uploader Visibility */
     div[data-testid="stFileUploader"] {
         background-color: #ffffff !important; border: 1px dashed #aaa !important;
         padding: 10px; border-radius: 8px;
@@ -70,6 +75,7 @@ st.markdown("""
     div[data-testid="stFileUploader"] span { color: #000 !important; }
     div[data-testid="stFileUploader"] small { color: #333 !important; }
 
+    /* 6. Card Styles */
     .party-card {
         background-color: #ffffff !important; padding: 15px; border-radius: 12px;
         box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 10px; border: 1px solid #e0e0e0;
@@ -80,6 +86,7 @@ st.markdown("""
     .party-name { font-size: 16px; font-weight: 600; color: #000 !important; }
     .date-text { font-size: 12px; color: #666 !important; }
     
+    /* 7. Dashboard Cards */
     div[data-testid="metric-container"] {
         background-color: white !important; border: 1px solid #eee !important;
         box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important;
@@ -87,6 +94,7 @@ st.markdown("""
     div[data-testid="metric-container"] label { color: #555 !important; }
     div[data-testid="metric-container"] div { color: #000 !important; }
 
+    /* 8. SPLASH SCREEN */
     .splash-container {
         display: flex; justify-content: center; align-items: center;
         height: 70vh; flex-direction: column; animation: fadeOut 2.5s forwards;
