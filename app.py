@@ -34,7 +34,7 @@ except ImportError:
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Gautam Pharma", layout="centered", page_icon="💊")
 
-# --- CUSTOM CSS: FORCE VISIBILITY (DARK MODE PROOF) ---
+# --- CUSTOM CSS: FORCE VISIBILITY ---
 st.markdown("""
     <style>
     .stApp { background-color: #f4f7f6 !important; color: #000000 !important; }
@@ -215,7 +215,7 @@ def get_party_balances():
             balances[p] = balances.get(p, 0) + amt
     return balances, last_dates
 
-# --- 3. AUTO-UPDATE MASTER LIST FUNCTION (CRITICAL FIX) ---
+# --- 3. AUTO-UPDATE MASTER LIST FUNCTION ---
 def update_party_master_if_new(party_list):
     """Checks if parties exist in Master. If not, adds them."""
     if not party_list: return
@@ -230,41 +230,70 @@ def update_party_master_if_new(party_list):
             clean_p = p.strip()
             if clean_p and clean_p.lower() not in existing_set:
                 new_rows.append([clean_p])
-                existing_set.add(clean_p.lower()) # Prevent adding duplicates in same batch
+                existing_set.add(clean_p.lower())
         
         if new_rows:
             ws.append_rows(new_rows)
-            st.cache_data.clear() # Clear cache so dropdown updates immediately
+            st.cache_data.clear()
             st.toast(f"✅ Added {len(new_rows)} new parties to Master List!")
     except Exception as e:
         print(f"Error updating master: {e}")
 
-# --- 4. AI & DRIVE HELPERS ---
+# --- 4. AI & DRIVE HELPERS (FIXED FOR MULTI-PAGE & STREAM) ---
 def compress_image(image_file):
     if image_file.type == "application/pdf":
         if not PDF_AVAILABLE: return None
         doc = fitz.open(stream=image_file.read(), filetype="pdf")
-        page = doc.load_page(0)
-        pix = page.get_pixmap()
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        
+        # STITCH ALL PAGES VERTICALLY
+        images = []
+        for i in range(doc.page_count):
+            page = doc.load_page(i)
+            pix = page.get_pixmap()
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            images.append(img)
+        
+        # Combine images
+        if not images: return None
+        total_height = sum(img.height for img in images)
+        max_width = max(img.width for img in images)
+        final_img = Image.new('RGB', (max_width, total_height))
+        y_offset = 0
+        for img in images:
+            final_img.paste(img, (0, y_offset))
+            y_offset += img.height
+        
+        img = final_img
     else:
         img = Image.open(image_file)
+    
     if img.mode in ("RGBA", "P"): img = img.convert("RGB")
+    
+    # Resize if huge
+    max_width = 1200
+    if img.width > max_width:
+        ratio = max_width / img.width
+        new_height = int(img.height * ratio)
+        img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
+
     output = io.BytesIO()
-    img.save(output, format="JPEG", quality=65, optimize=True)
-    output.seek(0)
+    img.save(output, format="JPEG", quality=60, optimize=True)
+    output.seek(0) # CRITICAL: Reset cursor
     return output
 
 def upload_to_drive(file_buffer, filename):
     try:
         if file_buffer is None: return None
+        file_buffer.seek(0) # CRITICAL: Reset cursor
         service = get_drive_service()
         if not service: return None
+        
         res = service.files().list(q="name='Gautam_Scans' and mimeType='application/vnd.google-apps.folder'").execute()
         if not res.get('files'):
             f = service.files().create(body={'name': 'Gautam_Scans', 'mimeType': 'application/vnd.google-apps.folder'}, fields='id').execute()
             fid = f.get('id')
         else: fid = res.get('files')[0].get('id')
+        
         media = MediaIoBaseUpload(file_buffer, mimetype='image/jpeg', resumable=True)
         f = service.files().create(body={'name': filename, 'parents': [fid]}, media_body=media, fields='id, webViewLink').execute()
         service.permissions().create(fileId=f.get('id'), body={'type': 'anyone', 'role': 'reader'}).execute()
@@ -274,6 +303,7 @@ def upload_to_drive(file_buffer, filename):
 def analyze_image_generic(prompt, file_buffer):
     try:
         if file_buffer is None: return None
+        file_buffer.seek(0) # CRITICAL: Reset cursor
         api_key = st.secrets["OPENAI_API_KEY"]
         client = OpenAI(api_key=api_key)
         b64 = base64.b64encode(file_buffer.read()).decode('utf-8')
@@ -451,11 +481,13 @@ def screen_scan_hub():
         if img_f and st.button("Process Journal", type="primary"):
             with st.spinner("Processing..."):
                 compressed = compress_image(img_f)
-                if not compressed: st.error("Error processing file."); return
-                link = upload_to_drive(compressed, f"Journal_{date.today()}.jpg")
-                p = """Analyze image. Extract Date. Identify Sales and Payments. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [{"Party": "Name", "Amount": 0}], "Payments": [{"Party": "Name", "Amount": 0}]}"""
-                data = analyze_image_generic(p, compressed)
-                if data: st.session_state.scan_res = data; st.session_state.scan_link = link; st.rerun()
+                if not compressed: 
+                    st.error("Error processing file. Install 'pymupdf' for PDF support.")
+                else:
+                    link = upload_to_drive(compressed, f"Journal_{date.today()}.jpg")
+                    p = """Analyze image. Extract Date. Identify Sales and Payments. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [{"Party": "Name", "Amount": 0}], "Payments": [{"Party": "Name", "Amount": 0}]}"""
+                    data = analyze_image_generic(p, compressed)
+                    if data: st.session_state.scan_res = data; st.session_state.scan_link = link; st.rerun()
 
     with t2: # Ledger
         st.write("Digitize Old Ledger Page")
@@ -464,13 +496,13 @@ def screen_scan_hub():
             with st.spinner("Processing..."):
                 compressed = compress_image(img_f)
                 if compressed:
-                    # SMART PROMPT FOR PARTY NAME & DATES
-                    p = """Analyze this Ledger. 
-                    1. Find the Main 'Party Name' at the top (e.g. 'Abhisek').
-                    2. Extract every transaction row.
+                    # SMART PROMPT FOR PARTY NAME & DATES & MULTI-PAGE
+                    p = """Analyze this Ledger Image (which may be multiple pages stitched together). 
+                    1. Find the Main 'Party Name' from the header (e.g. 'Abhisek').
+                    2. Extract every transaction row from the entire image.
                     3. If 'Sale' or 'Debit' -> Add to Sales.
                     4. If 'Payment' or 'Credit' -> Add to Payments.
-                    5. IMPORTANT: Extract the specific Date for EACH row.
+                    5. IMPORTANT: Extract the specific Date for EACH row (dd/mm/yyyy).
                     Return JSON: {
                         "Sales": [{"Date": "YYYY-MM-DD", "Party": "Main Party Name", "Amount": 0}], 
                         "Payments": [{"Date": "YYYY-MM-DD", "Party": "Main Party Name", "Amount": 0}]
@@ -516,8 +548,6 @@ def screen_scan_hub():
         
         if st.button("💾 Save Scanned Data", type="primary"):
             sh = get_sheet_object()
-            
-            # Gather all new party names to add to Master
             new_parties = []
             
             def get_r_date(row, fallback):
@@ -536,7 +566,7 @@ def screen_scan_hub():
                 new_parties.append(r['Party'])
             if rows_p: sh.worksheet("PaymentsReceived").append_rows(rows_p)
             
-            # --- CRITICAL FIX: Add New Parties to Master List ---
+            # --- AUTO ADD NEW PARTIES ---
             update_party_master_if_new(new_parties)
             
             st.success("Saved!"); del st.session_state.scan_res; st.rerun()
