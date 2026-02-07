@@ -660,11 +660,34 @@ def screen_tools():
             ws.update([ed_m.columns.tolist()] + ed_m.astype(str).values.tolist())
             st.success("Saved!")
     with t4:
-        st.error("Danger Zone")
-        if st.button("🧨 Factory Reset", disabled=(st.text_input("Type WIPE")!="WIPE")):
-            sh = get_sheet_object()
-            for s in ["CustomerDues", "PaymentsReceived"]: sh.worksheet(s).clear()
-            st.success("Reset Complete!")
+        st.error("Danger Zone: Deletes ALL Data")
+        st.write("To confirm, type **WIPE** in the box below:")
+        confirm_txt = st.text_input("Confirmation", placeholder="Type WIPE here")
+        
+        if st.button("🧨 Factory Reset", type="primary", disabled=(confirm_txt != "WIPE")):
+            with st.spinner("Resetting..."):
+                sh = get_sheet_object()
+                # 1. Define Headers
+                headers_map = {
+                    "CustomerDues": ["Date", "Party", "Amount"],
+                    "PaymentsReceived": ["Date", "Party", "Amount", "Mode", "Link"],
+                    "PaymentsToSuppliers": ["Date", "Supplier", "Amount", "Mode"],
+                    "GoodsReceived": ["Date", "Supplier", "Items", "Amount"],
+                    "Party_Master": ["Name"]
+                }
+                # 2. Clear & Restore Headers
+                for s_name, cols in headers_map.items():
+                    try:
+                        ws = sh.worksheet(s_name)
+                        ws.clear()
+                        ws.append_row(cols)
+                    except: pass
+                
+                # 3. Nuke Cache & Restart
+                st.cache_data.clear()
+                st.success("System Reset!")
+                time.sleep(1)
+                st.rerun()
 
 # --- MAIN APP LOGIC ---
 try:
