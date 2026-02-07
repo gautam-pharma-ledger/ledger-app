@@ -34,7 +34,7 @@ except ImportError:
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Gautam Pharma", layout="centered", page_icon="💊")
 
-# --- CUSTOM CSS: FORCE VISIBILITY ---
+# --- CUSTOM CSS: FORCE VISIBILITY (DARK MODE PROOF) ---
 st.markdown("""
     <style>
     .stApp { background-color: #f4f7f6 !important; color: #000000 !important; }
@@ -239,13 +239,13 @@ def update_party_master_if_new(party_list):
     except Exception as e:
         print(f"Error updating master: {e}")
 
-# --- 4. AI & DRIVE HELPERS (FIXED FOR MULTI-PAGE & STREAM) ---
+# --- 4. AI & DRIVE HELPERS (MULTI-PAGE PDF) ---
 def compress_image(image_file):
     if image_file.type == "application/pdf":
         if not PDF_AVAILABLE: return None
         doc = fitz.open(stream=image_file.read(), filetype="pdf")
         
-        # STITCH ALL PAGES VERTICALLY
+        # STITCH PAGES
         images = []
         for i in range(doc.page_count):
             page = doc.load_page(i)
@@ -253,7 +253,6 @@ def compress_image(image_file):
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             images.append(img)
         
-        # Combine images
         if not images: return None
         total_height = sum(img.height for img in images)
         max_width = max(img.width for img in images)
@@ -262,14 +261,13 @@ def compress_image(image_file):
         for img in images:
             final_img.paste(img, (0, y_offset))
             y_offset += img.height
-        
         img = final_img
     else:
         img = Image.open(image_file)
     
     if img.mode in ("RGBA", "P"): img = img.convert("RGB")
     
-    # Resize if huge
+    # Resize to prevent token limit errors
     max_width = 1200
     if img.width > max_width:
         ratio = max_width / img.width
@@ -278,13 +276,13 @@ def compress_image(image_file):
 
     output = io.BytesIO()
     img.save(output, format="JPEG", quality=60, optimize=True)
-    output.seek(0) # CRITICAL: Reset cursor
+    output.seek(0)
     return output
 
 def upload_to_drive(file_buffer, filename):
     try:
         if file_buffer is None: return None
-        file_buffer.seek(0) # CRITICAL: Reset cursor
+        file_buffer.seek(0)
         service = get_drive_service()
         if not service: return None
         
@@ -303,7 +301,7 @@ def upload_to_drive(file_buffer, filename):
 def analyze_image_generic(prompt, file_buffer):
     try:
         if file_buffer is None: return None
-        file_buffer.seek(0) # CRITICAL: Reset cursor
+        file_buffer.seek(0)
         api_key = st.secrets["OPENAI_API_KEY"]
         client = OpenAI(api_key=api_key)
         b64 = base64.b64encode(file_buffer.read()).decode('utf-8')
@@ -397,10 +395,7 @@ def screen_manual():
             elif "Received" in t_type: sh.worksheet("PaymentsReceived").append_row([str(d), p, a, m])
             elif "Paid" in t_type: sh.worksheet("PaymentsToSuppliers").append_row([str(d), p, a, m])
             elif "Purchase" in t_type: sh.worksheet("GoodsReceived").append_row([str(d), p, m, a])
-            
-            # AUTO UPDATE MASTER
             update_party_master_if_new([p])
-            
             st.success("Saved!"); time.sleep(1); st.session_state.page = 'home'; st.rerun()
 
 def screen_ledger():
@@ -416,11 +411,9 @@ def screen_ledger():
     if c2.button("Last Month"): st.session_state['l_s'] = (date.today().replace(day=1) - timedelta(days=1)).replace(day=1); st.rerun()
     if c3.button("All Time"): st.session_state['l_s'] = date(2023,1,1); st.rerun()
     if 'l_s' not in st.session_state: st.session_state['l_s'] = date(2025,1,1)
-    
     d1, d2 = st.columns(2)
     s = d1.date_input("From", st.session_state['l_s'])
     e = d2.date_input("To", date.today())
-    
     if sel:
         d_df = fetch_sheet_data("CustomerDues"); p_df = fetch_sheet_data("PaymentsReceived")
         supp = fetch_sheet_data("PaymentsToSuppliers"); goods = fetch_sheet_data("GoodsReceived")
@@ -437,7 +430,6 @@ def screen_ledger():
         for _, r in sub_sup.iterrows():
             dt = parse_date(str(r.get("Date")))
             if dt and s <= dt <= e: ledger.append({"Date": dt, "Particulars": "Paid Supplier", "Debit": clean_amount(r.get("Amount")), "Credit": 0})
-            
         if ledger:
             df = pd.DataFrame(ledger).sort_values("Date")
             running_bal = 0; df["Balance"] = 0.0
@@ -461,13 +453,16 @@ def screen_day_book():
     if st.button("🏠 Home"): st.session_state.page = 'home'; st.rerun()
     dt = st.date_input("Date", date.today())
     d_df = fetch_sheet_data("CustomerDues"); p_df = fetch_sheet_data("PaymentsReceived")
+    s_df = fetch_sheet_data("PaymentsToSuppliers")
     day_s = [r for _, r in d_df.iterrows() if parse_date(str(r.get("Date"))) == dt] if not d_df.empty else []
     day_p = [r for _, r in p_df.iterrows() if parse_date(str(r.get("Date"))) == dt] if not p_df.empty else []
+    day_sup = [r for _, r in s_df.iterrows() if parse_date(str(r.get("Date"))) == dt] if not s_df.empty else []
     st.metric("Total Sales", f"₹ {sum(clean_amount(x['Amount']) for x in day_s):,.0f}")
     st.metric("Total Received", f"₹ {sum(clean_amount(x['Amount']) for x in day_p):,.0f}")
     st.write("---")
     for r in day_s: st.markdown(f"🔴 **Sale**: {r['Party']} - ₹{r['Amount']}")
     for r in day_p: st.markdown(f"🟢 **Received**: {r['Party']} - ₹{r['Amount']}")
+    for r in day_sup: st.markdown(f"🟠 **Paid Supplier**: {r['Supplier']} - ₹{r['Amount']}")
 
 def screen_scan_hub():
     st.markdown("### 📸 Scanner Hub")
@@ -475,38 +470,45 @@ def screen_scan_hub():
     
     t1, t2, t3, t4 = st.tabs(["Journal", "Ledger", "Bank", "Bill"])
     
-    with t1: # Journal
+    # ----------------------------------------------------
+    # TAB 1: JOURNAL (Standard Image AI)
+    # ----------------------------------------------------
+    with t1:
         st.write("Upload Handwritten Journal Page")
         img_f = st.file_uploader("Image/PDF", type=['jpg','png','pdf'], key="j_upl")
         if img_f and st.button("Process Journal", type="primary"):
             with st.spinner("Processing..."):
                 compressed = compress_image(img_f)
-                if not compressed: 
-                    st.error("Error processing file. Install 'pymupdf' for PDF support.")
-                else:
-                    link = upload_to_drive(compressed, f"Journal_{date.today()}.jpg")
-                    p = """Analyze image. Extract Date. Identify Sales and Payments. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [{"Party": "Name", "Amount": 0}], "Payments": [{"Party": "Name", "Amount": 0}]}"""
-                    data = analyze_image_generic(p, compressed)
-                    if data: st.session_state.scan_res = data; st.session_state.scan_link = link; st.rerun()
+                if not compressed: st.error("Error processing file."); return
+                link = upload_to_drive(compressed, f"Journal_{date.today()}.jpg")
+                p = """Analyze image. Extract Date. Identify Sales and Payments. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [{"Party": "Name", "Amount": 0}], "Payments": [{"Party": "Name", "Amount": 0}]}"""
+                data = analyze_image_generic(p, compressed)
+                if data: st.session_state.scan_res = data; st.session_state.scan_link = link; st.rerun()
 
-    with t2: # Ledger
-        st.write("Digitize Old Ledger Page")
+    # ----------------------------------------------------
+    # TAB 2: LEDGER (STATEMENT MODE - FIXED)
+    # ----------------------------------------------------
+    with t2: 
+        st.write("Digitize Party Statement (PDF/Image)")
         img_f = st.file_uploader("Image/PDF", type=['jpg','png','pdf'], key="l_upl")
-        if img_f and st.button("Digitize Ledger", type="primary"):
+        if img_f and st.button("Digitize Statement", type="primary"):
             with st.spinner("Processing..."):
                 compressed = compress_image(img_f)
                 if compressed:
-                    # SMART PROMPT FOR PARTY NAME & DATES & MULTI-PAGE
-                    p = """Analyze this Ledger Image (which may be multiple pages stitched together). 
-                    1. Find the Main 'Party Name' from the header (e.g. 'Abhisek').
-                    2. Extract every transaction row from the entire image.
-                    3. If 'Sale' or 'Debit' -> Add to Sales.
-                    4. If 'Payment' or 'Credit' -> Add to Payments.
-                    5. IMPORTANT: Extract the specific Date for EACH row (dd/mm/yyyy).
-                    Return JSON: {
+                    # --- NEW SMART PROMPT ---
+                    p = """Analyze this Party Statement Image.
+                    1. FIND THE PARTY NAME at the very top (e.g. 'Abhisek Himalya Vet'). This is the 'Main Party'.
+                    2. IGNORE columns like 'Invoice No' or 'Ref No'. Do NOT use them as Party Names.
+                    3. Extract every transaction row from the table.
+                    4. For 'Sales' (Debit/Sale): Use 'Main Party' as Name. Use row Date.
+                    5. For 'Payments' (Credit/Received): Use 'Main Party' as Name. Use row Date.
+                    
+                    Return JSON format:
+                    {
                         "Sales": [{"Date": "YYYY-MM-DD", "Party": "Main Party Name", "Amount": 0}], 
                         "Payments": [{"Date": "YYYY-MM-DD", "Party": "Main Party Name", "Amount": 0}]
                     }"""
+                    
                     data = analyze_image_generic(p, compressed)
                     if data: st.session_state.scan_res = data; st.session_state.scan_link = "Ledger Scan"; st.rerun()
 
@@ -532,43 +534,50 @@ def screen_scan_hub():
                     data = analyze_image_generic(p, compressed)
                     if data: st.session_state.scan_res = data; st.session_state.scan_link = "Bill Scan"; st.rerun()
 
+    # --- RESULT REVIEW & SAVE ---
     if 'scan_res' in st.session_state:
         d = st.session_state.scan_res
         st.write("### Review Scan")
         
-        default_dt = st.date_input("Default Date", parse_date(d.get("Date")) or date.today())
+        # Show Date Column First by reordering
+        col_order_s = ['Date', 'Party', 'Amount']
+        col_order_p = ['Date', 'Party', 'Amount']
         
         st.write("Sales Detected:")
         df_s = pd.DataFrame(d.get("Sales", []))
-        ed_s = st.data_editor(df_s, num_rows="dynamic")
+        if not df_s.empty:
+            if 'Date' not in df_s.columns: df_s['Date'] = str(date.today())
+            df_s = df_s[col_order_s]
+        ed_s = st.data_editor(df_s, num_rows="dynamic", use_container_width=True)
         
         st.write("Payments Detected:")
         df_p = pd.DataFrame(d.get("Payments", []))
-        ed_p = st.data_editor(df_p, num_rows="dynamic")
+        if not df_p.empty:
+            if 'Date' not in df_p.columns: df_p['Date'] = str(date.today())
+            df_p = df_p[col_order_p]
+        ed_p = st.data_editor(df_p, num_rows="dynamic", use_container_width=True)
         
         if st.button("💾 Save Scanned Data", type="primary"):
             sh = get_sheet_object()
             new_parties = []
             
-            def get_r_date(row, fallback):
-                if 'Date' in row and row['Date']: return str(row['Date'])
-                return str(fallback)
-
+            # Save Sales
             rows_s = []
             for _, r in ed_s.iterrows():
-                rows_s.append([get_r_date(r, default_dt), r['Party'], r['Amount']])
+                dt = r['Date'] if r['Date'] else str(date.today())
+                rows_s.append([dt, r['Party'], r['Amount']])
                 new_parties.append(r['Party'])
             if rows_s: sh.worksheet("CustomerDues").append_rows(rows_s)
             
+            # Save Payments
             rows_p = []
             for _, r in ed_p.iterrows():
-                rows_p.append([get_r_date(r, default_dt), r['Party'], r['Amount']])
+                dt = r['Date'] if r['Date'] else str(date.today())
+                rows_p.append([dt, r['Party'], r['Amount']])
                 new_parties.append(r['Party'])
             if rows_p: sh.worksheet("PaymentsReceived").append_rows(rows_p)
             
-            # --- AUTO ADD NEW PARTIES ---
             update_party_master_if_new(new_parties)
-            
             st.success("Saved!"); del st.session_state.scan_res; st.rerun()
 
 def screen_voice_assistant():
@@ -612,7 +621,6 @@ def screen_tools():
     st.markdown("### ⚙️ Tools")
     if st.button("🏠 Home"): st.session_state.page = 'home'; st.rerun()
     t1, t2, t3, t4 = st.tabs(["Merge Party", "Edit Data", "Master List", "Reset"])
-    
     with t1:
         st.write("Combine duplicate parties")
         parties = get_all_party_names_display()
@@ -625,7 +633,6 @@ def screen_tools():
                 ups = [{"range": f"B{i+1}", "values": [[new]]} for i, r in enumerate(vals) if len(r)>1 and r[1]==old]
                 if ups: ws.batch_update(ups)
             st.success("Merged!")
-
     with t2:
         st.write("Edit transactions directly")
         sheet = st.selectbox("Select Sheet", ["CustomerDues", "PaymentsReceived"])
@@ -636,7 +643,6 @@ def screen_tools():
                 sh = get_sheet_object(); ws = sh.worksheet(sheet); ws.clear()
                 ws.update([ed.columns.tolist()] + ed.astype(str).values.tolist())
                 st.success("Updated!")
-
     with t3:
         st.write("Edit Master List (Phones/Codes)")
         df_m = fetch_sheet_data("Party_Master")
@@ -645,7 +651,6 @@ def screen_tools():
             sh = get_sheet_object(); ws = sh.worksheet("Party_Master"); ws.clear()
             ws.update([ed_m.columns.tolist()] + ed_m.astype(str).values.tolist())
             st.success("Saved!")
-
     with t4:
         st.error("Danger Zone")
         if st.button("🧨 Factory Reset", disabled=(st.text_input("Type WIPE")!="WIPE")):
