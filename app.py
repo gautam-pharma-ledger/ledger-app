@@ -27,47 +27,48 @@ except ImportError:
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Gautam Pharma", layout="centered", page_icon="💊")
 
-# --- CUSTOM CSS: KHATABOOK THEME ---
+# --- CUSTOM CSS: FORCE VISIBILITY ---
 st.markdown("""
     <style>
-    /* 1. Main Layout & Colors (White/Blue) */
-    .stApp { background-color: #f7f8fa; color: #1c1c1c; font-family: 'Roboto', sans-serif; }
+    /* 1. Main Background - Light Grey */
+    .stApp { background-color: #f0f2f5; color: #000000; font-family: sans-serif; }
     
-    /* 2. Header Style */
-    h1, h2, h3 { color: #2c3e50; font-weight: 700; }
-    
-    /* 3. Cards (Party List) */
-    .party-card {
-        background-color: white;
-        padding: 15px;
-        border-radius: 12px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-        margin-bottom: 10px;
-        border: 1px solid #e0e0e0;
+    /* 2. TAB VISIBILITY FIX (Crucial for Scanner) */
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px; white-space: pre-wrap; background-color: #ffffff; border-radius: 4px;
+        color: #333333; /* Default Text Color */
+        font-weight: 600;
+        border: 1px solid #ddd;
     }
+    .stTabs [aria-selected="true"] {
+        background-color: #e8f5e9 !important; color: #00c853 !important; border-color: #00c853 !important;
+    }
+
+    /* 3. BUTTONS (Blue/Red Primary) */
+    .stButton>button {
+        background-color: #ffffff; color: #111111; border: 1px solid #ccc;
+        border-radius: 8px; font-weight: 700; height: 3.5rem;
+    }
+    .stButton>button:hover { border-color: #007bff; color: #007bff; }
     
-    /* 4. Balance Colors */
+    /* Primary Action Button (Red) */
+    div[data-testid="stVerticalBlock"] > div > div > div > div > button[kind="primary"] {
+        background-color: #d32f2f !important; color: white !important; border: none;
+    }
+
+    /* 4. CARDS & METRICS */
+    div[data-testid="metric-container"] {
+        background-color: white; border: 1px solid #ddd; border-radius: 10px;
+        color: #333;
+    }
+    .party-card {
+        background-color: white; padding: 15px; border-radius: 10px;
+        margin-bottom: 10px; border: 1px solid #ddd;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
     .bal-green { color: #00c853; font-weight: 700; font-size: 16px; text-align: right; }
     .bal-red { color: #d50000; font-weight: 700; font-size: 16px; text-align: right; }
-    .sub-text { font-size: 12px; color: #757575; text-align: right; }
-    .party-name { font-size: 16px; font-weight: 600; color: #333; }
-    .date-text { font-size: 12px; color: #9e9e9e; }
-
-    /* 5. Buttons */
-    .stButton>button {
-        border-radius: 25px; font-weight: 600; border: 1px solid #ddd;
-        background-color: white; color: #333;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-    }
-    .stButton>button:hover {
-        border-color: #00c853; color: #00c853;
-    }
-    
-    /* 6. Dashboard Cards */
-    div[data-testid="metric-container"] {
-        background-color: white; border: 1px solid #eee;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -116,18 +117,15 @@ def fetch_sheet_data(sheet_name):
         df.fillna("", inplace=True)
         df.columns = [str(c).strip() for c in df.columns]
         
-        # Fix Supplier Column Name Logic
         if sheet_name in ["PaymentsToSuppliers", "GoodsReceived"]:
             if "Party" in df.columns: df.rename(columns={"Party": "Supplier"}, inplace=True)
             
-        # Strip Spaces
         for col in ["Party", "Supplier"]:
             if col in df.columns: df[col] = df[col].astype(str).str.strip()
             
         return df
     except: return pd.DataFrame()
 
-# --- HELPER FUNCS ---
 def clean_amount(val):
     try:
         val = str(val).replace(",", "").replace("₹", "").replace("Rs", "").strip()
@@ -314,7 +312,6 @@ def screen_ledger():
             
     sel = st.selectbox("Select Party", all_p, index=idx)
     
-    # RESTORED: Date Controls
     c1, c2, c3 = st.columns(3)
     if c1.button("This Month"): st.session_state['l_s'] = date.today().replace(day=1); st.rerun()
     if c2.button("Last Month"): st.session_state['l_s'] = (date.today().replace(day=1) - timedelta(days=1)).replace(day=1); st.rerun()
@@ -412,16 +409,15 @@ def screen_day_book():
     for r in day_p: st.markdown(f"🟢 **Received**: {r['Party']} - ₹{r['Amount']}")
     for r in day_sup: st.markdown(f"🟠 **Paid Supplier**: {r['Supplier']} - ₹{r['Amount']}")
 
-# --- RESTORED: FULL SCANNER HUB (All 4 Tabs) ---
 def screen_scan_hub():
     st.markdown("### 📸 Scanner Hub")
     if st.button("🏠 Home"): st.session_state.page = 'home'; st.rerun()
     
-    # 4 Tabs Restored
     t1, t2, t3, t4 = st.tabs(["Journal", "Ledger", "Bank", "Bill"])
     
     with t1: # Journal
-        img = st.file_uploader("Upload Journal", type=['jpg','png'], key="j_upl")
+        st.write("Upload Handwritten Journal Page")
+        img = st.file_uploader("Image", type=['jpg','png'], key="j_upl")
         if img and st.button("Process Journal"):
             with st.spinner("Processing..."):
                 link = upload_to_drive(compress_image(img), f"Journal_{date.today()}.jpg")
@@ -431,16 +427,18 @@ def screen_scan_hub():
                 if data: st.session_state.scan_res = data; st.session_state.scan_link = link; st.rerun()
 
     with t2: # Ledger
-        img = st.file_uploader("Upload Old Ledger", type=['jpg','png'], key="l_upl")
+        st.write("Digitize Old Ledger Page")
+        img = st.file_uploader("Image", type=['jpg','png'], key="l_upl")
         if img and st.button("Digitize Ledger"):
-            with st.spinner("Digitizing..."):
+            with st.spinner("Processing..."):
                 img.seek(0)
                 p = """Analyze Ledger Page. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [{"Party": "Name", "Amount": 0}], "Payments": []}"""
                 data = analyze_image_generic(p, img.read())
                 if data: st.session_state.scan_res = data; st.session_state.scan_link = "Ledger Scan"; st.rerun()
 
     with t3: # Bank
-        img = st.file_uploader("Bank Receipt", type=['jpg','png'], key="b_upl")
+        st.write("Analyze Bank Receipt")
+        img = st.file_uploader("Image", type=['jpg','png'], key="b_upl")
         if img and st.button("Check Receipt"):
             with st.spinner("Checking..."):
                 img.seek(0)
@@ -449,25 +447,29 @@ def screen_scan_hub():
                 if data: st.session_state.scan_res = data; st.session_state.scan_link = "Bank Scan"; st.rerun()
 
     with t4: # Bill
-        img = st.file_uploader("Upload Bill", type=['jpg','png'], key="bi_upl")
+        st.write("Scan Purchase Bill")
+        img = st.file_uploader("Image", type=['jpg','png'], key="bi_upl")
         if img and st.button("Read Bill"):
             with st.spinner("Reading..."):
                 img.seek(0)
-                p = """Analyze Purchase Bill. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [], "Payments": [{"Party": "Vendor Name", "Amount": 0}]}""" # Treating purchase as payment out for simplicity in this schema
+                p = """Analyze Purchase Bill. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [], "Payments": [{"Party": "Vendor Name", "Amount": 0}]}""" 
                 data = analyze_image_generic(p, img.read())
                 if data: st.session_state.scan_res = data; st.session_state.scan_link = "Bill Scan"; st.rerun()
 
-    # --- RESULT REVIEW & SAVE ---
     if 'scan_res' in st.session_state:
         d = st.session_state.scan_res
-        st.write("### Review")
+        st.write("### Review Scan")
         dt = st.date_input("Date", parse_date(d.get("Date")) or date.today())
         
         st.write("Sales Detected:")
         df_s = pd.DataFrame(d.get("Sales", []))
         ed_s = st.data_editor(df_s, num_rows="dynamic")
         
-        if st.button("💾 Save Scanned Data"):
+        st.write("Payments Detected:")
+        df_p = pd.DataFrame(d.get("Payments", []))
+        ed_p = st.data_editor(df_p, num_rows="dynamic")
+        
+        if st.button("💾 Save Scanned Data", type="primary"):
             sh = get_sheet_object()
             rows_s = [[str(dt), r['Party'], r['Amount']] for _, r in ed_s.iterrows()]
             if rows_s: sh.worksheet("CustomerDues").append_rows(rows_s)
@@ -505,7 +507,6 @@ def screen_voice_assistant():
                     st.success(f"Detected: {res}")
             except Exception as e: st.error(str(e))
 
-# --- RESTORED: FULL REMINDERS (With Sort) ---
 def screen_reminders():
     st.markdown("### 🔔 WhatsApp Reminders")
     if st.button("🏠 Home"): st.session_state.page = 'home'; st.rerun()
@@ -513,7 +514,6 @@ def screen_reminders():
     bals, _ = get_party_balances()
     due_list = [{"Party": p, "Due": v} for p, v in bals.items() if v > 1]
     
-    # Sort Buttons
     c1, c2 = st.columns(2)
     if c1.button("Sort: High Amount"): due_list.sort(key=lambda x: x['Due'], reverse=True)
     if c2.button("Sort: A-Z"): due_list.sort(key=lambda x: x['Party'])
@@ -527,14 +527,14 @@ def screen_reminders():
         link = f"https://wa.me/?text={urllib.parse.quote(msg)}"
         st.link_button(f"Send to {r['Party']}", link)
 
-# --- RESTORED: FULL TOOLS (4 Tabs) ---
 def screen_tools():
     st.markdown("### ⚙️ Tools")
     if st.button("🏠 Home"): st.session_state.page = 'home'; st.rerun()
     
     t1, t2, t3, t4 = st.tabs(["Merge Party", "Edit Data", "Master List", "Reset"])
     
-    with t1: # Merge
+    with t1:
+        st.write("Combine duplicate parties")
         parties = get_all_party_names_display()
         old = st.selectbox("Old Name", parties, index=None)
         new = st.selectbox("New Name", parties, index=None)
@@ -546,7 +546,8 @@ def screen_tools():
                 if ups: ws.batch_update(ups)
             st.success("Merged!")
 
-    with t2: # Edit
+    with t2:
+        st.write("Edit transactions directly")
         sheet = st.selectbox("Select Sheet", ["CustomerDues", "PaymentsReceived"])
         if st.button("Load Data"):
             st.session_state.tool_df = fetch_sheet_data(sheet)
@@ -558,7 +559,8 @@ def screen_tools():
                 ws.update([ed.columns.tolist()] + ed.astype(str).values.tolist())
                 st.success("Updated!")
 
-    with t3: # Master
+    with t3:
+        st.write("Edit Master List (Phones/Codes)")
         df_m = fetch_sheet_data("Party_Master")
         ed_m = st.data_editor(df_m, num_rows="dynamic")
         if st.button("Save Master List"):
@@ -566,7 +568,8 @@ def screen_tools():
             ws.update([ed_m.columns.tolist()] + ed_m.astype(str).values.tolist())
             st.success("Saved!")
 
-    with t4: # Reset
+    with t4:
+        st.error("Danger Zone")
         if st.button("🧨 Factory Reset", disabled=(st.text_input("Type WIPE")!="WIPE")):
             sh = get_sheet_object()
             for s in ["CustomerDues", "PaymentsReceived"]: sh.worksheet(s).clear()
