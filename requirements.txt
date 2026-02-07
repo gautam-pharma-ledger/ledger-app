@@ -2,8 +2,9 @@ streamlit
 pandas
 gspread
 google-auth
+google-api-python-client
 openai
 fpdf
-google-api-python-client
 Pillow
 streamlit-mic-recorder
+pymupdf
