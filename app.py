@@ -85,30 +85,21 @@ def fetch_sheet_data(sheet_name):
     try:
         sh = get_sheet_object()
         if not sh: return pd.DataFrame()
-        
         data = sh.worksheet(sheet_name).get_all_values()
         if not data: return pd.DataFrame()
         
         headers = data.pop(0)
         df = pd.DataFrame(data, columns=headers)
         
-        # 1. REMOVE EMPTY ROWS
+        # CLEAN DATA
         df.replace("", pd.NA, inplace=True)
         df.dropna(how='all', inplace=True)
         df.fillna("", inplace=True)
         
-        # 2. CLEAN HEADERS (Remove spaces like "Date ")
+        # Clean Headers & Data
         df.columns = [str(c).strip() for c in df.columns]
-        
-        # 3. NORMALIZE COLUMNS (Critical Fix)
-        # If 'PaymentsToSuppliers' has 'Party' instead of 'Supplier', rename it.
-        if sheet_name == "PaymentsToSuppliers" and "Party" in df.columns:
-            df.rename(columns={"Party": "Supplier"}, inplace=True)
-            
-        # Clean Data (Strip Spaces)
-        for col in ["Party", "Supplier"]:
-            if col in df.columns:
-                df[col] = df[col].astype(str).str.strip()
+        if "Party" in df.columns: df["Party"] = df["Party"].astype(str).str.strip()
+        if "Supplier" in df.columns: df["Supplier"] = df["Supplier"].astype(str).str.strip()
         
         return df
     except Exception as e:
@@ -216,28 +207,18 @@ def screen_home():
     
     tr, tp = 0, 0
     
-    # Calculate Totals with Normalization
     if not dues.empty and not pymt.empty:
-        # Lowercase + Strip for matching
-        dues["_k"] = dues["Party"].str.lower().str.strip()
-        pymt["_k"] = pymt["Party"].str.lower().str.strip()
-        
-        s_tot = dues.groupby("_k")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
-        r_tot = pymt.groupby("_k")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
-        
-        for k in s_tot.index.union(r_tot.index):
-            bal = s_tot.get(k, 0) - r_tot.get(k, 0)
+        s_tot = dues.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
+        r_tot = pymt.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
+        for p in s_tot.index.union(r_tot.index):
+            bal = s_tot.get(p, 0) - r_tot.get(p, 0)
             if bal > 0: tr += bal
             
     if not goods.empty and not supp.empty:
-        goods["_k"] = goods["Supplier"].str.lower().str.strip()
-        supp["_k"] = supp["Supplier"].str.lower().str.strip()
-        
-        p_tot = goods.groupby("_k")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
-        paid_tot = supp.groupby("_k")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
-        
-        for k in p_tot.index.union(paid_tot.index):
-            bal = p_tot.get(k, 0) - paid_tot.get(k, 0)
+        p_tot = goods.groupby("Supplier")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
+        paid_tot = supp.groupby("Supplier")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
+        for s in p_tot.index.union(paid_tot.index):
+            bal = p_tot.get(s, 0) - paid_tot.get(s, 0)
             if bal > 0: tp += bal
 
     net = tr - tp
@@ -274,20 +255,24 @@ def screen_day_book():
         paid = fetch_sheet_data("PaymentsToSuppliers")
         purchases = fetch_sheet_data("GoodsReceived")
 
-    def robust_filter(df, target_date):
+    # --- ROBUST FILTERING (Strict Date Match) ---
+    def get_day_data(df, target_date):
         if df.empty or "Date" not in df.columns: return pd.DataFrame()
         target_str = target_date.strftime("%Y-%m-%d")
+        
         mask = []
         for d in df["Date"]:
             pd_date = parse_date(str(d))
-            if pd_date and pd_date.strftime("%Y-%m-%d") == target_str: mask.append(True)
-            else: mask.append(False)
+            if pd_date and pd_date.strftime("%Y-%m-%d") == target_str:
+                mask.append(True)
+            else:
+                mask.append(False)
         return df[mask]
 
-    d_s = robust_filter(sales, view_date)
-    d_r = robust_filter(received, view_date)
-    d_p = robust_filter(paid, view_date)
-    d_g = robust_filter(purchases, view_date)
+    d_s = get_day_data(sales, view_date)
+    d_r = get_day_data(received, view_date)
+    d_p = get_day_data(paid, view_date)
+    d_g = get_day_data(purchases, view_date)
 
     t_s = d_s["Amount"].apply(clean_amount).sum() if not d_s.empty else 0
     t_r = d_r["Amount"].apply(clean_amount).sum() if not d_r.empty else 0
@@ -337,12 +322,6 @@ def screen_ledger():
     e = d2.date_input("To", st.session_state['l_e'])
     
     sel = st.selectbox("Party", get_all_party_names_display(), index=idx)
-    
-    # --- DEBUG TOGGLE ---
-    if st.checkbox("Show Raw Data Debug"):
-        st.info("Check this if data is missing.")
-        st.write("Date Range:", s, "to", e)
-        if sel: st.write(f"Searching for: '{extract_name_display(sel)}'")
     
     if st.button("🔎 Show", type="primary") or idx is not None:
         if not sel: return
@@ -525,20 +504,72 @@ def screen_reminders():
 def screen_tools():
     st.write("Tools: Edit/Merge")
     if st.button("🏠 Home"): st.session_state.page = 'home'; st.rerun()
-    t1, t2 = st.tabs(["Edit", "Merge"])
-    with t1:
-        s = st.selectbox("Sheet", ["CustomerDues", "PaymentsReceived"])
+    
+    t1, t2, t3, t4 = st.tabs(["Edit", "Merge", "Master", "Reset"])
+    
+    with t1: # Edit
+        s = st.selectbox("Sheet", ["CustomerDues", "PaymentsReceived", "PaymentsToSuppliers", "GoodsReceived"])
         if st.button("Load"):
             st.session_state.t_df = fetch_sheet_data(s)
             st.session_state.t_s = s
         if 't_df' in st.session_state:
             ed = st.data_editor(st.session_state.t_df, num_rows="dynamic")
-            if st.button("Save"):
+            if st.button("Save Changes"):
                 sh = get_sheet_object()
                 ws = sh.worksheet(st.session_state.t_s)
                 ws.clear()
                 ws.update([ed.columns.tolist()] + ed.astype(str).values.tolist())
                 st.toast("Updated!")
+
+    with t2: # Merge
+        parties = get_all_party_names_display()
+        old = st.selectbox("Wrong Name", parties, index=None)
+        new = st.selectbox("Correct Name", parties, index=None)
+        if st.button("Merge") and old and new:
+            o_raw = extract_name_display(old)
+            n_raw = extract_name_display(new)
+            sh = get_sheet_object()
+            count = 0
+            for s in ["CustomerDues", "PaymentsReceived", "PaymentsToSuppliers", "GoodsReceived"]:
+                try:
+                    ws = sh.worksheet(s)
+                    vals = ws.get_all_values()
+                    head = vals[0]
+                    col = -1
+                    if "Party" in head: col = head.index("Party")
+                    elif "Supplier" in head: col = head.index("Supplier")
+                    if col != -1:
+                        ups = []
+                        for i, r in enumerate(vals):
+                            if i>0 and r[col] == o_raw:
+                                ups.append({"range": f"{chr(65+col)}{i+1}", "values": [[n_raw]]})
+                                count += 1
+                        if ups: ws.batch_update(ups)
+                except: pass
+            st.toast(f"Merged {count} entries!")
+            st.cache_data.clear()
+
+    with t3: # Master
+        df_m = fetch_sheet_data("Party_Master")
+        ed_m = st.data_editor(df_m, num_rows="dynamic")
+        if st.button("Save Master"):
+            sh = get_sheet_object()
+            ws = sh.worksheet("Party_Master")
+            ws.clear()
+            ws.update([ed_m.columns.tolist()] + ed_m.astype(str).values.tolist())
+            st.toast("Saved!")
+
+    with t4: # Reset
+        if st.button("🧨 Factory Reset", disabled=(st.text_input("Type WIPE") != "WIPE")):
+            sh = get_sheet_object()
+            sheets = {"CustomerDues": ["Date","Party","Amount"], "PaymentsReceived": ["Date","Party","Amount","Mode"], 
+                      "PaymentsToSuppliers": ["Date","Supplier","Amount","Mode"], "GoodsReceived": ["Date","Supplier","Items","Amount"],
+                      "Party_Master": ["Name","Code","Type","Phone","Address"]}
+            for s, h in sheets.items():
+                try: ws = sh.worksheet(s); ws.clear(); ws.update(range_name="A1", values=[h])
+                except: pass
+            st.toast("Reset Complete!")
+            time.sleep(2); st.rerun()
 
 # --- MAIN APP LOGIC ---
 try:
