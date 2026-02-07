@@ -27,48 +27,81 @@ except ImportError:
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Gautam Pharma", layout="centered", page_icon="💊")
 
-# --- CUSTOM CSS: FORCE VISIBILITY ---
+# --- CUSTOM CSS: FORCE VISIBILITY (DARK MODE PROOF) ---
 st.markdown("""
     <style>
-    /* 1. Main Background - Light Grey */
-    .stApp { background-color: #f0f2f5; color: #000000; font-family: sans-serif; }
+    /* 1. FORCE Main Background & Text */
+    .stApp { background-color: #f4f7f6 !important; color: #000000 !important; }
     
-    /* 2. TAB VISIBILITY FIX (Crucial for Scanner) */
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] {
-        height: 50px; white-space: pre-wrap; background-color: #ffffff; border-radius: 4px;
-        color: #333333; /* Default Text Color */
-        font-weight: 600;
-        border: 1px solid #ddd;
+    /* 2. FORCE Tabs Visibility */
+    button[data-baseweb="tab"] {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+        border: 1px solid #ddd !important;
+        font-weight: 600 !important;
     }
-    .stTabs [aria-selected="true"] {
-        background-color: #e8f5e9 !important; color: #00c853 !important; border-color: #00c853 !important;
+    button[data-baseweb="tab"][aria-selected="true"] {
+        background-color: #e3f2fd !important;
+        color: #1565c0 !important;
+        border-color: #1565c0 !important;
     }
 
-    /* 3. BUTTONS (Blue/Red Primary) */
-    .stButton>button {
-        background-color: #ffffff; color: #111111; border: 1px solid #ccc;
-        border-radius: 8px; font-weight: 700; height: 3.5rem;
+    /* 3. FORCE Inputs (Date, Text, Select) to be White with Black Text */
+    .stTextInput input, .stDateInput input, .stSelectbox div[data-baseweb="select"] {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+        border: 1px solid #ccc !important;
     }
-    .stButton>button:hover { border-color: #007bff; color: #007bff; }
-    
-    /* Primary Action Button (Red) */
+    /* Fix Dropdown Menu Items */
+    ul[data-baseweb="menu"] { background-color: #ffffff !important; }
+    li[data-baseweb="option"] { color: #000000 !important; }
+
+    /* 4. FORCE Buttons */
+    .stButton > button {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+        border: 1px solid #ccc !important;
+        font-weight: bold !important;
+    }
+    /* Primary Button (Red) */
     div[data-testid="stVerticalBlock"] > div > div > div > div > button[kind="primary"] {
-        background-color: #d32f2f !important; color: white !important; border: none;
+        background-color: #d32f2f !important;
+        color: #ffffff !important;
+        border: none !important;
     }
 
-    /* 4. CARDS & METRICS */
-    div[data-testid="metric-container"] {
-        background-color: white; border: 1px solid #ddd; border-radius: 10px;
-        color: #333;
+    /* 5. FORCE File Uploader Visibility */
+    div[data-testid="stFileUploader"] {
+        background-color: #ffffff !important;
+        border: 1px dashed #aaa !important;
+        padding: 10px;
+        border-radius: 8px;
     }
+    div[data-testid="stFileUploader"] span { color: #000 !important; }
+    div[data-testid="stFileUploader"] small { color: #333 !important; }
+
+    /* 6. Card Styles */
     .party-card {
-        background-color: white; padding: 15px; border-radius: 10px;
-        margin-bottom: 10px; border: 1px solid #ddd;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        background-color: #ffffff !important;
+        padding: 15px; border-radius: 12px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        margin-bottom: 10px; border: 1px solid #e0e0e0;
     }
-    .bal-green { color: #00c853; font-weight: 700; font-size: 16px; text-align: right; }
-    .bal-red { color: #d50000; font-weight: 700; font-size: 16px; text-align: right; }
+    .bal-green { color: #2e7d32 !important; font-weight: 700; font-size: 16px; text-align: right; }
+    .bal-red { color: #c62828 !important; font-weight: 700; font-size: 16px; text-align: right; }
+    .sub-text { font-size: 12px; color: #555 !important; text-align: right; }
+    .party-name { font-size: 16px; font-weight: 600; color: #000 !important; }
+    .date-text { font-size: 12px; color: #666 !important; }
+    
+    /* 7. Dashboard Cards */
+    div[data-testid="metric-container"] {
+        background-color: white !important; 
+        border: 1px solid #eee !important;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important;
+    }
+    div[data-testid="metric-container"] label { color: #555 !important; }
+    div[data-testid="metric-container"] div { color: #000 !important; }
+    
     </style>
 """, unsafe_allow_html=True)
 
@@ -220,6 +253,34 @@ def analyze_image_generic(prompt, image_bytes):
         return json.loads(s[s.find('{'):s.rfind('}')+1])
     except: return None
 
+# --- 4. PDF GENERATOR ---
+def generate_pdf(party, df, start, end):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(190, 10, "Gautam Pharma", ln=True, align='C')
+    pdf.set_font("Arial", '', 10)
+    pdf.cell(190, 10, f"Statement: {party} ({start} to {end})", ln=True, align='C')
+    pdf.ln(5)
+    pdf.set_fill_color(240, 240, 240)
+    pdf.cell(25, 8, "Date", 1, 0, 'C', 1)
+    pdf.cell(85, 8, "Particulars", 1, 0, 'C', 1)
+    pdf.cell(25, 8, "Debit", 1, 0, 'C', 1)
+    pdf.cell(25, 8, "Credit", 1, 0, 'C', 1)
+    pdf.cell(30, 8, "Balance", 1, 1, 'C', 1)
+    bal = 0
+    pdf.set_font("Arial", '', 9)
+    for _, r in df.iterrows():
+        dr = r.get('Debit', 0)
+        cr = r.get('Credit', 0)
+        bal += (dr - cr)
+        pdf.cell(25, 7, str(r['Date']), 1)
+        pdf.cell(85, 7, str(r.get('Particulars', ''))[:40], 1)
+        pdf.cell(25, 7, f"{dr:,.2f}", 1)
+        pdf.cell(25, 7, f"{cr:,.2f}", 1)
+        pdf.cell(30, 7, f"{bal:,.2f}", 1, 1)
+    return pdf.output(dest='S').encode('latin-1')
+
 # --- 3. SCREENS ---
 
 def screen_home():
@@ -232,12 +293,12 @@ def screen_home():
     st.markdown(f"""
     <div style="background:white; padding:15px; border-radius:10px; border:1px solid #ddd; margin-bottom:15px; display:flex; justify-content:space-between;">
         <div style="text-align:center; width:48%; border-right:1px solid #eee;">
-            <div style="color:#00c853; font-weight:bold; font-size:18px;">₹ {total_get:,.0f}</div>
-            <div style="color:#757575; font-size:12px;">You'll Get</div>
+            <div style="color:#2e7d32; font-weight:bold; font-size:18px;">₹ {total_get:,.0f}</div>
+            <div style="color:#555; font-size:12px;">You'll Get</div>
         </div>
         <div style="text-align:center; width:48%;">
-            <div style="color:#d50000; font-weight:bold; font-size:18px;">₹ {total_give:,.0f}</div>
-            <div style="color:#757575; font-size:12px;">You'll Give</div>
+            <div style="color:#c62828; font-weight:bold; font-size:18px;">₹ {total_give:,.0f}</div>
+            <div style="color:#555; font-size:12px;">You'll Give</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -257,7 +318,6 @@ def screen_home():
     st.markdown("---")
     st.markdown("#### Parties")
     search_q = st.text_input("Search Party", placeholder="Search...", label_visibility="collapsed")
-    
     sorted_parties = sorted(bals.items(), key=lambda x: x[1], reverse=True)
     
     for party, bal in sorted_parties:
@@ -334,58 +394,54 @@ def screen_ledger():
         sub_s = d_df[d_df["Party"] == sel] if not d_df.empty else pd.DataFrame()
         for _, r in sub_s.iterrows():
             dt = parse_date(str(r.get("Date")))
-            if dt and s <= dt <= e: ledger.append({"Date": dt, "Type": "SALE", "Desc": "Bill", "Amount": clean_amount(r.get("Amount")), "DrCr": "Dr"})
+            if dt and s <= dt <= e: 
+                ledger.append({"Date": dt, "Particulars": "Sale", "Debit": clean_amount(r.get("Amount")), "Credit": 0})
         
         # Rx
         sub_p = p_df[p_df["Party"] == sel] if not p_df.empty else pd.DataFrame()
         for _, r in sub_p.iterrows():
             dt = parse_date(str(r.get("Date")))
-            if dt and s <= dt <= e: ledger.append({"Date": dt, "Type": "RECEIVED", "Desc": r.get("Mode",""), "Amount": clean_amount(r.get("Amount")), "DrCr": "Cr"})
+            if dt and s <= dt <= e: 
+                ledger.append({"Date": dt, "Particulars": f"Received ({r.get('Mode','')})", "Debit": 0, "Credit": clean_amount(r.get("Amount"))})
 
         # Supplier Logic
         sub_sup = supp[supp["Supplier"] == sel] if not supp.empty else pd.DataFrame()
         for _, r in sub_sup.iterrows():
             dt = parse_date(str(r.get("Date")))
-            if dt and s <= dt <= e: ledger.append({"Date": dt, "Type": "PAID", "Desc": "Out", "Amount": clean_amount(r.get("Amount")), "DrCr": "Dr"})
+            if dt and s <= dt <= e: 
+                ledger.append({"Date": dt, "Particulars": "Paid Supplier", "Debit": clean_amount(r.get("Amount")), "Credit": 0})
             
         if ledger:
             df = pd.DataFrame(ledger).sort_values("Date")
             running_bal = 0
             df["Balance"] = 0.0
             for i, row in df.iterrows():
-                if row["DrCr"] == "Dr": running_bal += row["Amount"]
-                else: running_bal -= row["Amount"]
+                if row["Debit"] > 0: running_bal += row["Debit"]
+                else: running_bal -= row["Credit"]
                 df.at[i, "Balance"] = running_bal
             
             st.write("---")
             for _, r in df.iterrows():
-                color = "red" if r["DrCr"] == "Dr" else "green"
-                icon = "🔴" if r["DrCr"] == "Dr" else "🟢"
+                color = "red" if r["Debit"] > 0 else "green"
+                amt = r["Debit"] if r["Debit"] > 0 else r["Credit"]
+                type_tx = "DEBIT" if r["Debit"] > 0 else "CREDIT"
+                
                 st.markdown(f"""
                 <div style="background:white; padding:10px; border-radius:8px; margin-bottom:8px; border-left: 5px solid {color}; box-shadow: 0 1px 2px #eee;">
                     <div style="display:flex; justify-content:space-between;">
-                        <div style="font-weight:bold; color:#333;">{icon} {r['Type']}</div>
-                        <div style="font-weight:bold; color:#333;">₹ {r['Amount']:,.0f}</div>
+                        <div style="font-weight:bold; color:#333;">{type_tx}</div>
+                        <div style="font-weight:bold; color:#333;">₹ {amt:,.0f}</div>
                     </div>
                     <div style="display:flex; justify-content:space-between; font-size:12px; color:#666;">
-                        <div>{r['Date']} | {r['Desc']}</div>
+                        <div>{r['Date']} | {r['Particulars']}</div>
                         <div>Bal: ₹ {r['Balance']:,.0f}</div>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
             
             if st.button("Download PDF"):
-                pdf = FPDF()
-                pdf.add_page(); pdf.set_font("Arial", size=12)
-                pdf.cell(200, 10, txt=f"Statement: {sel}", ln=True, align='C')
-                pdf.set_fill_color(240,240,240)
-                pdf.cell(30,10,"Date",1); pdf.cell(80,10,"Desc",1); pdf.cell(40,10,"Amount",1); pdf.cell(40,10,"Balance",1,1)
-                for _, r in df.iterrows():
-                    pdf.cell(30,10,str(r['Date']),1)
-                    pdf.cell(80,10,str(r['Desc']),1)
-                    pdf.cell(40,10,str(r['Amount']),1)
-                    pdf.cell(40,10,str(r['Balance']),1,1)
-                st.download_button("Download PDF", pdf.output(dest='S').encode('latin-1'), "stmt.pdf")
+                pdf = generate_pdf(sel, df, s, e)
+                st.download_button("Download PDF", pdf, "stmt.pdf")
         else: st.info("No transactions found.")
 
 def screen_day_book():
@@ -418,7 +474,7 @@ def screen_scan_hub():
     with t1: # Journal
         st.write("Upload Handwritten Journal Page")
         img = st.file_uploader("Image", type=['jpg','png'], key="j_upl")
-        if img and st.button("Process Journal"):
+        if img and st.button("Process Journal", type="primary"):
             with st.spinner("Processing..."):
                 link = upload_to_drive(compress_image(img), f"Journal_{date.today()}.jpg")
                 img.seek(0)
@@ -429,7 +485,7 @@ def screen_scan_hub():
     with t2: # Ledger
         st.write("Digitize Old Ledger Page")
         img = st.file_uploader("Image", type=['jpg','png'], key="l_upl")
-        if img and st.button("Digitize Ledger"):
+        if img and st.button("Digitize Ledger", type="primary"):
             with st.spinner("Processing..."):
                 img.seek(0)
                 p = """Analyze Ledger Page. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [{"Party": "Name", "Amount": 0}], "Payments": []}"""
@@ -439,7 +495,7 @@ def screen_scan_hub():
     with t3: # Bank
         st.write("Analyze Bank Receipt")
         img = st.file_uploader("Image", type=['jpg','png'], key="b_upl")
-        if img and st.button("Check Receipt"):
+        if img and st.button("Check Receipt", type="primary"):
             with st.spinner("Checking..."):
                 img.seek(0)
                 p = """Analyze Receipt. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [], "Payments": [{"Party": "Sender Name", "Amount": 0}]}"""
@@ -449,7 +505,7 @@ def screen_scan_hub():
     with t4: # Bill
         st.write("Scan Purchase Bill")
         img = st.file_uploader("Image", type=['jpg','png'], key="bi_upl")
-        if img and st.button("Read Bill"):
+        if img and st.button("Read Bill", type="primary"):
             with st.spinner("Reading..."):
                 img.seek(0)
                 p = """Analyze Purchase Bill. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [], "Payments": [{"Party": "Vendor Name", "Amount": 0}]}""" 
@@ -589,5 +645,15 @@ try:
     elif st.session_state.page == 'tools': screen_tools()
 
 except Exception as e:
-    st.error("Something went wrong")
-    st.code(traceback.format_exc())
+    # 1. Capture the error
+    error_msg = traceback.format_exc()
+    st.error("⚠️ An error occurred!")
+    
+    # 2. WhatsApp Link for Admin
+    admin_phone = "918825155422"
+    encoded_err = urllib.parse.quote(f"🚨 App Error Report:\n\n{str(e)}\n\nTechnical Details:\n{error_msg}")
+    wa_link = f"https://wa.me/{admin_phone}?text={encoded_err}"
+    
+    st.link_button("📤 Send Error to Admin (WhatsApp)", wa_link, type="primary")
+    with st.expander("Technical Details"):
+        st.code(error_msg)
