@@ -17,6 +17,13 @@ from PIL import Image
 import io
 import traceback
 
+# --- SAFETY IMPORT FOR PDF SUPPORT ---
+try:
+    import fitz  # PyMuPDF
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
+
 # --- SAFETY IMPORT FOR VOICE ---
 try:
     from streamlit_mic_recorder import mic_recorder
@@ -62,6 +69,7 @@ st.markdown("""
         border: 1px solid #ccc !important;
         font-weight: bold !important;
     }
+    /* Primary Button (Red) */
     div[data-testid="stVerticalBlock"] > div > div > div > div > button[kind="primary"] {
         background-color: #d32f2f !important;
         color: #ffffff !important;
@@ -99,7 +107,7 @@ st.markdown("""
     div[data-testid="metric-container"] label { color: #555 !important; }
     div[data-testid="metric-container"] div { color: #000 !important; }
 
-    /* 8. SPLASH SCREEN (Updated for White Theme) */
+    /* 8. SPLASH SCREEN */
     .splash-container {
         display: flex; justify-content: center; align-items: center;
         height: 70vh; flex-direction: column; animation: fadeOut 2.5s forwards;
@@ -123,7 +131,6 @@ def show_splash_screen():
         splash = st.empty()
         with splash.container():
             logo_url = "https://raw.githubusercontent.com/gautam-pharma-ledger/ledger-app/main/Photoroom-20260102_114853282.png"
-            # Updated Text Color to #2c3e50 (Dark Blue) so it shows on white bg
             st.markdown(f"""
             <div class="splash-container">
                 <img src="{logo_url}">
@@ -245,7 +252,18 @@ def get_party_balances():
 
 # --- 2. AI & DRIVE HELPERS ---
 def compress_image(image_file):
-    img = Image.open(image_file)
+    # PDF SUPPORT: If PDF, Convert to Image
+    if image_file.type == "application/pdf":
+        if not PDF_AVAILABLE:
+            return None # Fail gracefully
+        doc = fitz.open(stream=image_file.read(), filetype="pdf")
+        page = doc.load_page(0) # First page only
+        pix = page.get_pixmap()
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+    else:
+        # Standard Image
+        img = Image.open(image_file)
+    
     if img.mode in ("RGBA", "P"): img = img.convert("RGB")
     output = io.BytesIO()
     img.save(output, format="JPEG", quality=65, optimize=True)
@@ -254,6 +272,7 @@ def compress_image(image_file):
 
 def upload_to_drive(file_buffer, filename):
     try:
+        if file_buffer is None: return None
         service = get_drive_service()
         if not service: return None
         res = service.files().list(q="name='Gautam_Scans' and mimeType='application/vnd.google-apps.folder'").execute()
@@ -268,11 +287,12 @@ def upload_to_drive(file_buffer, filename):
         return f.get('webViewLink')
     except: return None
 
-def analyze_image_generic(prompt, image_bytes):
+def analyze_image_generic(prompt, file_buffer):
     try:
+        if file_buffer is None: return None
         api_key = st.secrets["OPENAI_API_KEY"]
         client = OpenAI(api_key=api_key)
-        b64 = base64.b64encode(image_bytes).decode('utf-8')
+        b64 = base64.b64encode(file_buffer.read()).decode('utf-8')
         resp = client.chat.completions.create(model="gpt-4o", messages=[
             {"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}
         ])
@@ -500,44 +520,50 @@ def screen_scan_hub():
     
     with t1: # Journal
         st.write("Upload Handwritten Journal Page")
-        img = st.file_uploader("Image", type=['jpg','png'], key="j_upl")
-        if img and st.button("Process Journal", type="primary"):
+        img_f = st.file_uploader("Image/PDF", type=['jpg','png','pdf'], key="j_upl")
+        if img_f and st.button("Process Journal", type="primary"):
             with st.spinner("Processing..."):
-                link = upload_to_drive(compress_image(img), f"Journal_{date.today()}.jpg")
-                img.seek(0)
-                p = """Analyze image. Extract Date. Identify Sales and Payments. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [{"Party": "Name", "Amount": 0}], "Payments": [{"Party": "Name", "Amount": 0}]}"""
-                data = analyze_image_generic(p, img.read())
-                if data: st.session_state.scan_res = data; st.session_state.scan_link = link; st.rerun()
+                compressed = compress_image(img_f)
+                if not compressed: 
+                    st.error("Error processing file. Install 'pymupdf' for PDF support.")
+                else:
+                    link = upload_to_drive(compressed, f"Journal_{date.today()}.jpg")
+                    p = """Analyze image. Extract Date. Identify Sales and Payments. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [{"Party": "Name", "Amount": 0}], "Payments": [{"Party": "Name", "Amount": 0}]}"""
+                    data = analyze_image_generic(p, compressed)
+                    if data: st.session_state.scan_res = data; st.session_state.scan_link = link; st.rerun()
 
     with t2: # Ledger
         st.write("Digitize Old Ledger Page")
-        img = st.file_uploader("Image", type=['jpg','png'], key="l_upl")
-        if img and st.button("Digitize Ledger", type="primary"):
+        img_f = st.file_uploader("Image/PDF", type=['jpg','png','pdf'], key="l_upl")
+        if img_f and st.button("Digitize Ledger", type="primary"):
             with st.spinner("Processing..."):
-                img.seek(0)
-                p = """Analyze Ledger Page. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [{"Party": "Name", "Amount": 0}], "Payments": []}"""
-                data = analyze_image_generic(p, img.read())
-                if data: st.session_state.scan_res = data; st.session_state.scan_link = "Ledger Scan"; st.rerun()
+                compressed = compress_image(img_f)
+                if compressed:
+                    p = """Analyze Ledger Page. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [{"Party": "Name", "Amount": 0}], "Payments": []}"""
+                    data = analyze_image_generic(p, compressed)
+                    if data: st.session_state.scan_res = data; st.session_state.scan_link = "Ledger Scan"; st.rerun()
 
     with t3: # Bank
         st.write("Analyze Bank Receipt")
-        img = st.file_uploader("Image", type=['jpg','png'], key="b_upl")
-        if img and st.button("Check Receipt", type="primary"):
+        img_f = st.file_uploader("Image/PDF", type=['jpg','png','pdf'], key="b_upl")
+        if img_f and st.button("Check Receipt", type="primary"):
             with st.spinner("Checking..."):
-                img.seek(0)
-                p = """Analyze Receipt. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [], "Payments": [{"Party": "Sender Name", "Amount": 0}]}"""
-                data = analyze_image_generic(p, img.read())
-                if data: st.session_state.scan_res = data; st.session_state.scan_link = "Bank Scan"; st.rerun()
+                compressed = compress_image(img_f)
+                if compressed:
+                    p = """Analyze Receipt. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [], "Payments": [{"Party": "Sender Name", "Amount": 0}]}"""
+                    data = analyze_image_generic(p, compressed)
+                    if data: st.session_state.scan_res = data; st.session_state.scan_link = "Bank Scan"; st.rerun()
 
     with t4: # Bill
         st.write("Scan Purchase Bill")
-        img = st.file_uploader("Image", type=['jpg','png'], key="bi_upl")
-        if img and st.button("Read Bill", type="primary"):
+        img_f = st.file_uploader("Image/PDF", type=['jpg','png','pdf'], key="bi_upl")
+        if img_f and st.button("Read Bill", type="primary"):
             with st.spinner("Reading..."):
-                img.seek(0)
-                p = """Analyze Purchase Bill. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [], "Payments": [{"Party": "Vendor Name", "Amount": 0}]}""" 
-                data = analyze_image_generic(p, img.read())
-                if data: st.session_state.scan_res = data; st.session_state.scan_link = "Bill Scan"; st.rerun()
+                compressed = compress_image(img_f)
+                if compressed:
+                    p = """Analyze Purchase Bill. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [], "Payments": [{"Party": "Vendor Name", "Amount": 0}]}""" 
+                    data = analyze_image_generic(p, compressed)
+                    if data: st.session_state.scan_res = data; st.session_state.scan_link = "Bill Scan"; st.rerun()
 
     if 'scan_res' in st.session_state:
         d = st.session_state.scan_res
@@ -662,7 +688,7 @@ def screen_tools():
 try:
     if 'page' not in st.session_state: st.session_state.page = 'home'
     
-    # 🚀 ANIMATION TRIGGER IS HERE
+    # 🚀 ANIMATION TRIGGER
     show_splash_screen()
     
     if st.session_state.page == 'home': screen_home()
