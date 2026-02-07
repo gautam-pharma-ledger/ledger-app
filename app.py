@@ -125,13 +125,12 @@ def fetch_sheet_data(sheet_name):
         # 2. CLEAN HEADERS
         df.columns = [str(c).strip() for c in df.columns]
         
-        # 3. CRITICAL FIX: RE-MAP COLUMN NAMES
-        # This ensures 'PaymentsToSuppliers' works even if column is named 'Party'
+        # 3. FIX COLUMN NAMES
         if sheet_name in ["PaymentsToSuppliers", "GoodsReceived"]:
             if "Party" in df.columns: 
                 df.rename(columns={"Party": "Supplier"}, inplace=True)
         
-        # 4. CLEAN DATA (Strip Spaces)
+        # 4. CLEAN DATA
         for col in ["Party", "Supplier"]:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.strip()
@@ -247,11 +246,13 @@ def generate_pdf(party, df, start, end):
     pdf.cell(30, 8, "Balance", 1, 1, 'C', 1)
     bal = 0
     pdf.set_font("Arial", '', 9)
+    # FIX: Uses 'Debit', 'Credit', 'Particulars' keys correctly
     for _, r in df.iterrows():
-        dr, cr = r['Debit'], r['Credit']
+        dr = r.get('Debit', 0)
+        cr = r.get('Credit', 0)
         bal += (dr - cr)
         pdf.cell(25, 7, str(r['Date']), 1)
-        pdf.cell(85, 7, str(r['Description'])[:40], 1)
+        pdf.cell(85, 7, str(r.get('Particulars', ''))[:40], 1)
         pdf.cell(25, 7, f"{dr:,.2f}", 1)
         pdf.cell(25, 7, f"{cr:,.2f}", 1)
         pdf.cell(30, 7, f"{bal:,.2f}", 1, 1)
@@ -266,22 +267,18 @@ def screen_home():
     supp = fetch_sheet_data("PaymentsToSuppliers")
     
     tr, tp = 0, 0
-    
     if not dues.empty and not pymt.empty:
-        # Use simple Party Key for totals
         s_tot = dues.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         r_tot = pymt.groupby("Party")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         for p in s_tot.index.union(r_tot.index):
             bal = s_tot.get(p, 0) - r_tot.get(p, 0)
             if bal > 0: tr += bal
-            
     if not goods.empty and not supp.empty:
         p_tot = goods.groupby("Supplier")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         paid_tot = supp.groupby("Supplier")["Amount"].apply(lambda x: x.apply(clean_amount).sum())
         for s in p_tot.index.union(paid_tot.index):
             bal = p_tot.get(s, 0) - paid_tot.get(s, 0)
             if bal > 0: tp += bal
-
     net = tr - tp
     
     st.markdown("### 📊 Market Position")
@@ -306,14 +303,12 @@ def screen_home():
 def screen_day_book():
     st.markdown("### 📅 Day Book (Roznamcha)")
     if st.button("🏠 Home", use_container_width=True): st.session_state.page = 'home'; st.rerun()
-    
     view_date = st.date_input("Select Date", date.today())
     
-    with st.spinner("Fetching Data..."):
-        sales = fetch_sheet_data("CustomerDues")
-        received = fetch_sheet_data("PaymentsReceived")
-        paid = fetch_sheet_data("PaymentsToSuppliers")
-        purchases = fetch_sheet_data("GoodsReceived")
+    sales = fetch_sheet_data("CustomerDues")
+    received = fetch_sheet_data("PaymentsReceived")
+    paid = fetch_sheet_data("PaymentsToSuppliers")
+    purchases = fetch_sheet_data("GoodsReceived")
 
     def get_day_data(df, target_date):
         if df.empty or "Date" not in df.columns: return pd.DataFrame()
@@ -392,39 +387,48 @@ def screen_ledger():
             if df.empty: return pd.DataFrame()
             return df[df[col].astype(str).str.lower().str.strip() == p_clean]
 
-        # 1. Sales
+        # FIX: Explicitly name columns "Debit", "Credit", "Particulars" for PDF
+        # 1. Sales (Debit)
         sub = get_matches(d_df, "Party")
         for _, r in sub.iterrows():
             dt = parse_date(str(r["Date"]))
-            if dt and s <= dt <= e: ledger.append({"Date": dt, "Desc": "Sale", "Dr": clean_amount(r["Amount"]), "Cr": 0})
+            if dt and s <= dt <= e: 
+                ledger.append({"Date": dt, "Particulars": "Sale", "Debit": clean_amount(r["Amount"]), "Credit": 0})
                     
-        # 2. Payments Received
+        # 2. Received (Credit)
         sub = get_matches(p_df, "Party")
         for _, r in sub.iterrows():
             dt = parse_date(str(r["Date"]))
-            if dt and s <= dt <= e: ledger.append({"Date": dt, "Desc": f"Rx {r.get('Mode','')}", "Dr": 0, "Cr": clean_amount(r["Amount"])})
+            if dt and s <= dt <= e: 
+                ledger.append({"Date": dt, "Particulars": f"Rx {r.get('Mode','')}", "Debit": 0, "Credit": clean_amount(r["Amount"])})
 
-        # 3. Payments to Suppliers
+        # 3. Paid Supplier (Debit - reduces liability)
         sub = get_matches(supp_pay_df, "Supplier")
         for _, r in sub.iterrows():
             dt = parse_date(str(r["Date"]))
-            if dt and s <= dt <= e: ledger.append({"Date": dt, "Desc": f"Paid Supplier {r.get('Mode','')}", "Dr": clean_amount(r["Amount"]), "Cr": 0})
+            if dt and s <= dt <= e: 
+                ledger.append({"Date": dt, "Particulars": f"Paid Supplier {r.get('Mode','')}", "Debit": clean_amount(r["Amount"]), "Credit": 0})
 
-        # 4. Purchases
+        # 4. Purchases (Credit - increases liability)
         sub = get_matches(goods_df, "Supplier")
         for _, r in sub.iterrows():
             dt = parse_date(str(r["Date"]))
-            if dt and s <= dt <= e: ledger.append({"Date": dt, "Desc": f"Purchase ({r.get('Items','')})", "Dr": 0, "Cr": clean_amount(r["Amount"])})
+            if dt and s <= dt <= e: 
+                ledger.append({"Date": dt, "Particulars": f"Purchase ({r.get('Items','')})", "Debit": 0, "Credit": clean_amount(r["Amount"])})
         
         if ledger:
             df = pd.DataFrame(ledger).sort_values("Date")
-            bal = df["Dr"].sum() - df["Cr"].sum()
+            bal = df["Debit"].sum() - df["Credit"].sum()
+            
             df["Date"] = df["Date"].astype(str)
             st.dataframe(df, use_container_width=True)
+            
             status = "Receivable (Lena hai)" if bal > 0 else "Payable (Dena hai)"
             st.metric(f"Net Balance ({status})", f"₹{abs(bal):,.2f}")
+            
             pdf = generate_pdf(p_name, df, s, e)
             st.download_button("📄 PDF", pdf, "stmt.pdf", "application/pdf")
+            
             lnk = f"https://wa.me/?text={urllib.parse.quote(f'Hello {p_name}, Bal: {bal}')}"
             st.link_button("💬 Share WhatsApp", lnk)
         else: st.info("No records found.")
@@ -466,7 +470,7 @@ def screen_scan_hub():
 
 def screen_voice_assistant():
     st.markdown("### 🎙️ Voice")
-    if st.button("🏠 Home", use_container_width=True): st.session_state.page = 'home'; st.rerun()
+    if st.button("🏠 Home"): st.session_state.page = 'home'; st.rerun()
     if not VOICE_AVAILABLE: st.error("Voice not supported."); return
     audio = mic_recorder(start_prompt="🎤 Speak", stop_prompt="⏹️ Stop", key='mic')
     if audio:
@@ -510,13 +514,9 @@ def screen_reminders():
     rec = fetch_sheet_data("PaymentsReceived")
     bal = {}
     if not dues.empty:
-        for _, r in dues.iterrows(): 
-            p = str(r["Party"]).strip()
-            bal[p] = bal.get(p, 0) + clean_amount(r["Amount"])
+        for _, r in dues.iterrows(): p = str(r["Party"]).strip(); bal[p] = bal.get(p, 0) + clean_amount(r["Amount"])
     if not rec.empty:
-        for _, r in rec.iterrows():
-            p = str(r["Party"]).strip()
-            bal[p] = bal.get(p, 0) - clean_amount(r["Amount"])
+        for _, r in rec.iterrows(): p = str(r["Party"]).strip(); bal[p] = bal.get(p, 0) - clean_amount(r["Amount"])
     data = [{"Party": k, "Balance": v} for k,v in bal.items() if v > 1]
     df = pd.DataFrame(data).sort_values("Balance", ascending=False)
     for _, r in df.iterrows():
