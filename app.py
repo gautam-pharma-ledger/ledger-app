@@ -433,18 +433,31 @@ def screen_scan_hub():
     with t2: # Ledger
         img = st.file_uploader("Upload Old Ledger", type=['jpg','png'], key="l_upl")
         if img and st.button("Digitize Ledger"):
-            st.info("Feature active (Uses same AI logic as Journal)")
+            with st.spinner("Digitizing..."):
+                img.seek(0)
+                p = """Analyze Ledger Page. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [{"Party": "Name", "Amount": 0}], "Payments": []}"""
+                data = analyze_image_generic(p, img.read())
+                if data: st.session_state.scan_res = data; st.session_state.scan_link = "Ledger Scan"; st.rerun()
 
     with t3: # Bank
         img = st.file_uploader("Bank Receipt", type=['jpg','png'], key="b_upl")
         if img and st.button("Check Receipt"):
-            st.info("Feature active")
+            with st.spinner("Checking..."):
+                img.seek(0)
+                p = """Analyze Receipt. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [], "Payments": [{"Party": "Sender Name", "Amount": 0}]}"""
+                data = analyze_image_generic(p, img.read())
+                if data: st.session_state.scan_res = data; st.session_state.scan_link = "Bank Scan"; st.rerun()
 
     with t4: # Bill
         img = st.file_uploader("Upload Bill", type=['jpg','png'], key="bi_upl")
         if img and st.button("Read Bill"):
-            st.info("Feature active")
+            with st.spinner("Reading..."):
+                img.seek(0)
+                p = """Analyze Purchase Bill. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [], "Payments": [{"Party": "Vendor Name", "Amount": 0}]}""" # Treating purchase as payment out for simplicity in this schema
+                data = analyze_image_generic(p, img.read())
+                if data: st.session_state.scan_res = data; st.session_state.scan_link = "Bill Scan"; st.rerun()
 
+    # --- RESULT REVIEW & SAVE ---
     if 'scan_res' in st.session_state:
         d = st.session_state.scan_res
         st.write("### Review")
@@ -454,10 +467,14 @@ def screen_scan_hub():
         df_s = pd.DataFrame(d.get("Sales", []))
         ed_s = st.data_editor(df_s, num_rows="dynamic")
         
-        if st.button("Save Scanned Data"):
+        if st.button("💾 Save Scanned Data"):
             sh = get_sheet_object()
-            rows = [[str(dt), r['Party'], r['Amount']] for _, r in ed_s.iterrows()]
-            if rows: sh.worksheet("CustomerDues").append_rows(rows)
+            rows_s = [[str(dt), r['Party'], r['Amount']] for _, r in ed_s.iterrows()]
+            if rows_s: sh.worksheet("CustomerDues").append_rows(rows_s)
+            
+            rows_p = [[str(dt), r['Party'], r['Amount']] for _, r in ed_p.iterrows()]
+            if rows_p: sh.worksheet("PaymentsReceived").append_rows(rows_p)
+            
             st.success("Saved!"); del st.session_state.scan_res; st.rerun()
 
 def screen_voice_assistant():
@@ -498,12 +515,8 @@ def screen_reminders():
     
     # Sort Buttons
     c1, c2 = st.columns(2)
-    sort_opt = st.radio("Sort By:", ["High Amount", "A-Z"], horizontal=True)
-    
-    if sort_opt == "High Amount":
-        due_list.sort(key=lambda x: x['Due'], reverse=True)
-    else:
-        due_list.sort(key=lambda x: x['Party'])
+    if c1.button("Sort: High Amount"): due_list.sort(key=lambda x: x['Due'], reverse=True)
+    if c2.button("Sort: A-Z"): due_list.sort(key=lambda x: x['Party'])
     
     df = pd.DataFrame(due_list)
     st.dataframe(df, use_container_width=True)
@@ -526,7 +539,12 @@ def screen_tools():
         old = st.selectbox("Old Name", parties, index=None)
         new = st.selectbox("New Name", parties, index=None)
         if st.button("Merge Now") and old and new:
-            st.success("Merge Logic Simulated")
+            sh = get_sheet_object()
+            for s in ["CustomerDues", "PaymentsReceived"]:
+                ws = sh.worksheet(s); vals = ws.get_all_values()
+                ups = [{"range": f"B{i+1}", "values": [[new]]} for i, r in enumerate(vals) if len(r)>1 and r[1]==old]
+                if ups: ws.batch_update(ups)
+            st.success("Merged!")
 
     with t2: # Edit
         sheet = st.selectbox("Select Sheet", ["CustomerDues", "PaymentsReceived"])
@@ -536,16 +554,23 @@ def screen_tools():
         if 'tool_df' in st.session_state:
             ed = st.data_editor(st.session_state.tool_df, num_rows="dynamic")
             if st.button("Save Changes"):
+                sh = get_sheet_object(); ws = sh.worksheet(sheet); ws.clear()
+                ws.update([ed.columns.tolist()] + ed.astype(str).values.tolist())
                 st.success("Updated!")
 
     with t3: # Master
         df_m = fetch_sheet_data("Party_Master")
-        st.data_editor(df_m, num_rows="dynamic")
-        st.button("Save Master List")
+        ed_m = st.data_editor(df_m, num_rows="dynamic")
+        if st.button("Save Master List"):
+            sh = get_sheet_object(); ws = sh.worksheet("Party_Master"); ws.clear()
+            ws.update([ed_m.columns.tolist()] + ed_m.astype(str).values.tolist())
+            st.success("Saved!")
 
     with t4: # Reset
-        if st.button("🧨 Factory Reset Data", disabled=True):
-            st.error("Disabled for safety")
+        if st.button("🧨 Factory Reset", disabled=(st.text_input("Type WIPE")!="WIPE")):
+            sh = get_sheet_object()
+            for s in ["CustomerDues", "PaymentsReceived"]: sh.worksheet(s).clear()
+            st.success("Reset Complete!")
 
 # --- MAIN APP LOGIC ---
 try:
