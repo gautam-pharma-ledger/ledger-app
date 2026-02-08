@@ -34,81 +34,27 @@ except ImportError:
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Gautam Pharma", layout="centered", page_icon="💊")
 
-# --- CUSTOM CSS: FORCE VISIBILITY (DARK MODE PROOF) ---
+# --- CUSTOM CSS ---
 st.markdown("""
     <style>
-    /* 1. FORCE Main Background & Text */
     .stApp { background-color: #f4f7f6 !important; color: #000000 !important; }
-    
-    /* 2. FORCE Tabs Visibility */
-    button[data-baseweb="tab"] {
-        background-color: #ffffff !important; color: #000000 !important;
-        border: 1px solid #ddd !important; font-weight: 600 !important;
-    }
-    button[data-baseweb="tab"][aria-selected="true"] {
-        background-color: #e3f2fd !important; color: #1565c0 !important;
-        border-color: #1565c0 !important;
-    }
-
-    /* 3. FORCE Inputs (Date, Text, Select) to be White with Black Text */
-    .stTextInput input, .stDateInput input, .stSelectbox div[data-baseweb="select"] {
-        background-color: #ffffff !important; color: #000000 !important;
-        border: 1px solid #ccc !important;
-    }
-    ul[data-baseweb="menu"] { background-color: #ffffff !important; }
-    li[data-baseweb="option"] { color: #000000 !important; }
-
-    /* 4. FORCE Buttons */
-    .stButton > button {
-        background-color: #ffffff !important; color: #000000 !important;
-        border: 1px solid #ccc !important; font-weight: bold !important;
-    }
-    div[data-testid="stVerticalBlock"] > div > div > div > div > button[kind="primary"] {
-        background-color: #d32f2f !important; color: #ffffff !important; border: none !important;
-    }
-
-    /* 5. FORCE File Uploader Visibility */
-    div[data-testid="stFileUploader"] {
-        background-color: #ffffff !important; border: 1px dashed #aaa !important;
-        padding: 10px; border-radius: 8px;
-    }
+    button[data-baseweb="tab"] { background-color: #ffffff !important; color: #000000 !important; border: 1px solid #ddd !important; font-weight: 600 !important; }
+    button[data-baseweb="tab"][aria-selected="true"] { background-color: #e3f2fd !important; color: #1565c0 !important; border-color: #1565c0 !important; }
+    .stTextInput input, .stDateInput input, .stSelectbox div[data-baseweb="select"] { background-color: #ffffff !important; color: #000000 !important; border: 1px solid #ccc !important; }
+    .stButton > button { background-color: #ffffff !important; color: #000000 !important; border: 1px solid #ccc !important; font-weight: bold !important; }
+    div[data-testid="stVerticalBlock"] > div > div > div > div > button[kind="primary"] { background-color: #d32f2f !important; color: #ffffff !important; border: none !important; }
+    div[data-testid="stFileUploader"] { background-color: #ffffff !important; border: 1px dashed #aaa !important; padding: 10px; border-radius: 8px; }
     div[data-testid="stFileUploader"] span { color: #000 !important; }
     div[data-testid="stFileUploader"] small { color: #333 !important; }
-
-    /* 6. Card Styles */
-    .party-card {
-        background-color: #ffffff !important; padding: 15px; border-radius: 12px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 10px; border: 1px solid #e0e0e0;
-    }
+    .party-card { background-color: #ffffff !important; padding: 15px; border-radius: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 10px; border: 1px solid #e0e0e0; }
     .bal-green { color: #2e7d32 !important; font-weight: 700; font-size: 16px; text-align: right; }
     .bal-red { color: #c62828 !important; font-weight: 700; font-size: 16px; text-align: right; }
-    .sub-text { font-size: 12px; color: #555 !important; text-align: right; }
-    .party-name { font-size: 16px; font-weight: 600; color: #000 !important; }
-    .date-text { font-size: 12px; color: #666 !important; }
-    
-    /* 7. Dashboard Cards */
-    div[data-testid="metric-container"] {
-        background-color: white !important; border: 1px solid #eee !important;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important;
-    }
+    div[data-testid="metric-container"] { background-color: white !important; border: 1px solid #eee !important; box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important; }
     div[data-testid="metric-container"] label { color: #555 !important; }
     div[data-testid="metric-container"] div { color: #000 !important; }
-
-    /* 8. SPLASH SCREEN */
-    .splash-container {
-        display: flex; justify-content: center; align-items: center;
-        height: 70vh; flex-direction: column; animation: fadeOut 2.5s forwards;
-    }
-    .splash-container img {
-        width: 150px; margin-bottom: 20px; border-radius: 20px;
-        box-shadow: 0 0 40px rgba(41, 121, 255, 0.25);
-    }
-    @keyframes fadeOut {
-        0% { opacity: 0; transform: scale(0.8); }
-        20% { opacity: 1; transform: scale(1); }
-        80% { opacity: 1; transform: scale(1); }
-        100% { opacity: 0; transform: scale(1.1); }
-    }
+    .splash-container { display: flex; justify-content: center; align-items: center; height: 70vh; flex-direction: column; animation: fadeOut 2.5s forwards; }
+    .splash-container img { width: 150px; margin-bottom: 20px; border-radius: 20px; box-shadow: 0 0 40px rgba(41, 121, 255, 0.25); }
+    @keyframes fadeOut { 0% { opacity: 0; transform: scale(0.8); } 20% { opacity: 1; transform: scale(1); } 80% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1.1); } }
     </style>
 """, unsafe_allow_html=True)
 
@@ -232,14 +178,12 @@ def update_party_master_if_new(party_list):
         ws = sh.worksheet("Party_Master")
         existing_data = ws.col_values(1) # Assuming Name is Col 1
         existing_set = set([x.strip().lower() for x in existing_data if x])
-        
         new_rows = []
         for p in party_list:
             clean_p = p.strip()
             if clean_p and clean_p.lower() not in existing_set:
                 new_rows.append([clean_p])
                 existing_set.add(clean_p.lower())
-        
         if new_rows:
             ws.append_rows(new_rows)
             st.cache_data.clear()
@@ -252,15 +196,12 @@ def compress_image(image_file):
     if image_file.type == "application/pdf":
         if not PDF_AVAILABLE: return None
         doc = fitz.open(stream=image_file.read(), filetype="pdf")
-        
-        # STITCH PAGES
         images = []
         for i in range(doc.page_count):
             page = doc.load_page(i)
             pix = page.get_pixmap()
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             images.append(img)
-        
         if not images: return None
         total_height = sum(img.height for img in images)
         max_width = max(img.width for img in images)
@@ -274,14 +215,11 @@ def compress_image(image_file):
         img = Image.open(image_file)
     
     if img.mode in ("RGBA", "P"): img = img.convert("RGB")
-    
-    # Resize to prevent token limit errors
     max_width = 1200
     if img.width > max_width:
         ratio = max_width / img.width
         new_height = int(img.height * ratio)
         img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
-
     output = io.BytesIO()
     img.save(output, format="JPEG", quality=60, optimize=True)
     output.seek(0)
@@ -293,13 +231,11 @@ def upload_to_drive(file_buffer, filename):
         file_buffer.seek(0)
         service = get_drive_service()
         if not service: return None
-        
         res = service.files().list(q="name='Gautam_Scans' and mimeType='application/vnd.google-apps.folder'").execute()
         if not res.get('files'):
             f = service.files().create(body={'name': 'Gautam_Scans', 'mimeType': 'application/vnd.google-apps.folder'}, fields='id').execute()
             fid = f.get('id')
         else: fid = res.get('files')[0].get('id')
-        
         media = MediaIoBaseUpload(file_buffer, mimetype='image/jpeg', resumable=True)
         f = service.files().create(body={'name': filename, 'parents': [fid]}, media_body=media, fields='id, webViewLink').execute()
         service.permissions().create(fileId=f.get('id'), body={'type': 'anyone', 'role': 'reader'}).execute()
@@ -479,7 +415,7 @@ def screen_scan_hub():
     t1, t2, t3, t4 = st.tabs(["Journal", "Ledger", "Bank", "Bill"])
     
     # ----------------------------------------------------
-    # TAB 1: JOURNAL (Standard Image AI)
+    # TAB 1: JOURNAL (HANDWRITTEN QUADRANT LOGIC)
     # ----------------------------------------------------
     with t1:
         st.write("Upload Handwritten Journal Page")
@@ -489,7 +425,26 @@ def screen_scan_hub():
                 compressed = compress_image(img_f)
                 if not compressed: st.error("Error processing file."); return
                 link = upload_to_drive(compressed, f"Journal_{date.today()}.jpg")
-                p = """Analyze image. Extract Date. Identify Sales and Payments. Return JSON: {"Date": "YYYY-MM-DD", "Sales": [{"Party": "Name", "Amount": 0}], "Payments": [{"Party": "Name", "Amount": 0}]}"""
+                
+                # --- NEW SMART PROMPT FOR HANDWRITTEN FORM ---
+                p = """Analyze this handwritten journal page. It has 4 specific sections (quadrants):
+                1. Top Left: 'PAYMENT RECEIVED' -> These are PAYMENTS from Customers (Credit).
+                2. Bottom Left: 'RETAILERS DUES' -> These are SALES to Customers (Debit).
+                3. Bottom Right: 'PAYMENT TO SUPPLIER' -> These are PAYMENTS OUT (Debit).
+                4. Top Right: 'PURCHASE DETAILS' -> These are PURCHASES (Credit).
+                
+                Extract the Date from top right.
+                For each entry, extract 'Party' and 'Amount'.
+                
+                Return JSON: 
+                {
+                    "Date": "YYYY-MM-DD", 
+                    "Sales": [{"Party": "Name", "Amount": 0}], 
+                    "Payments": [{"Party": "Name", "Amount": 0}],
+                    "SupplierPayments": [{"Party": "Name", "Amount": 0}],
+                    "Purchases": [{"Party": "Name", "Amount": 0}]
+                }"""
+                
                 data = analyze_image_generic(p, compressed)
                 if data: st.session_state.scan_res = data; st.session_state.scan_link = link; st.rerun()
 
@@ -547,43 +502,71 @@ def screen_scan_hub():
         d = st.session_state.scan_res
         st.write("### Review Scan")
         
-        # Show Date Column First by reordering
-        col_order_s = ['Date', 'Party', 'Amount']
-        col_order_p = ['Date', 'Party', 'Amount']
+        default_dt = st.date_input("Default Date", parse_date(d.get("Date")) or date.today())
         
-        st.write("Sales Detected:")
+        # 1. SALES (Customer Dues)
+        st.write("Sales (Retailers Dues):")
         df_s = pd.DataFrame(d.get("Sales", []))
-        if not df_s.empty:
-            if 'Date' not in df_s.columns: df_s['Date'] = str(date.today())
-            df_s = df_s[col_order_s]
-        ed_s = st.data_editor(df_s, num_rows="dynamic", use_container_width=True)
+        if not df_s.empty and 'Date' not in df_s.columns: df_s['Date'] = str(default_dt)
+        ed_s = st.data_editor(df_s, num_rows="dynamic", use_container_width=True, key="ed_s")
         
-        st.write("Payments Detected:")
+        # 2. PAYMENTS RECEIVED (Customer Payments)
+        st.write("Payments Received:")
         df_p = pd.DataFrame(d.get("Payments", []))
-        if not df_p.empty:
-            if 'Date' not in df_p.columns: df_p['Date'] = str(date.today())
-            df_p = df_p[col_order_p]
-        ed_p = st.data_editor(df_p, num_rows="dynamic", use_container_width=True)
+        if not df_p.empty and 'Date' not in df_p.columns: df_p['Date'] = str(default_dt)
+        ed_p = st.data_editor(df_p, num_rows="dynamic", use_container_width=True, key="ed_p")
+
+        # 3. SUPPLIER PAYMENTS (Optional - shown if detected)
+        df_sup = pd.DataFrame(d.get("SupplierPayments", []))
+        ed_sup = pd.DataFrame() # Init empty
+        if not df_sup.empty:
+            st.write("Payments to Suppliers:")
+            if 'Date' not in df_sup.columns: df_sup['Date'] = str(default_dt)
+            ed_sup = st.data_editor(df_sup, num_rows="dynamic", use_container_width=True, key="ed_sup")
+
+        # 4. PURCHASES (Optional - shown if detected)
+        df_pur = pd.DataFrame(d.get("Purchases", []))
+        ed_pur = pd.DataFrame() # Init empty
+        if not df_pur.empty:
+            st.write("Purchases (Stock In):")
+            if 'Date' not in df_pur.columns: df_pur['Date'] = str(default_dt)
+            ed_pur = st.data_editor(df_pur, num_rows="dynamic", use_container_width=True, key="ed_pur")
         
-        if st.button("💾 Save Scanned Data", type="primary"):
+        if st.button("💾 Save All Data", type="primary"):
             sh = get_sheet_object()
             new_parties = []
             
+            def get_r_date(row, fallback):
+                if 'Date' in row and row['Date']: return str(row['Date'])
+                return str(fallback)
+
             # Save Sales
             rows_s = []
             for _, r in ed_s.iterrows():
-                dt = r['Date'] if r['Date'] else str(date.today())
-                rows_s.append([dt, r['Party'], r['Amount']])
+                rows_s.append([get_r_date(r, default_dt), r['Party'], r['Amount']])
                 new_parties.append(r['Party'])
             if rows_s: sh.worksheet("CustomerDues").append_rows(rows_s)
             
-            # Save Payments
+            # Save Payments Rx
             rows_p = []
             for _, r in ed_p.iterrows():
-                dt = r['Date'] if r['Date'] else str(date.today())
-                rows_p.append([dt, r['Party'], r['Amount']])
+                rows_p.append([get_r_date(r, default_dt), r['Party'], r['Amount']])
                 new_parties.append(r['Party'])
             if rows_p: sh.worksheet("PaymentsReceived").append_rows(rows_p)
+
+            # Save Supplier Payments (if any)
+            if not ed_sup.empty:
+                rows_sup = []
+                for _, r in ed_sup.iterrows():
+                    rows_sup.append([get_r_date(r, default_dt), r['Party'], r['Amount'], "Scan"])
+                if rows_sup: sh.worksheet("PaymentsToSuppliers").append_rows(rows_sup)
+
+            # Save Purchases (if any)
+            if not ed_pur.empty:
+                rows_pur = []
+                for _, r in ed_pur.iterrows():
+                    rows_pur.append([get_r_date(r, default_dt), r['Party'], "Scan", r['Amount']])
+                if rows_pur: sh.worksheet("GoodsReceived").append_rows(rows_pur)
             
             update_party_master_if_new(new_parties)
             st.success("Saved!"); del st.session_state.scan_res; st.rerun()
@@ -660,34 +643,11 @@ def screen_tools():
             ws.update([ed_m.columns.tolist()] + ed_m.astype(str).values.tolist())
             st.success("Saved!")
     with t4:
-        st.error("Danger Zone: Deletes ALL Data")
-        st.write("To confirm, type **WIPE** in the box below:")
-        confirm_txt = st.text_input("Confirmation", placeholder="Type WIPE here")
-        
-        if st.button("🧨 Factory Reset", type="primary", disabled=(confirm_txt != "WIPE")):
-            with st.spinner("Resetting..."):
-                sh = get_sheet_object()
-                # 1. Define Headers
-                headers_map = {
-                    "CustomerDues": ["Date", "Party", "Amount"],
-                    "PaymentsReceived": ["Date", "Party", "Amount", "Mode", "Link"],
-                    "PaymentsToSuppliers": ["Date", "Supplier", "Amount", "Mode"],
-                    "GoodsReceived": ["Date", "Supplier", "Items", "Amount"],
-                    "Party_Master": ["Name"]
-                }
-                # 2. Clear & Restore Headers
-                for s_name, cols in headers_map.items():
-                    try:
-                        ws = sh.worksheet(s_name)
-                        ws.clear()
-                        ws.append_row(cols)
-                    except: pass
-                
-                # 3. Nuke Cache & Restart
-                st.cache_data.clear()
-                st.success("System Reset!")
-                time.sleep(1)
-                st.rerun()
+        st.error("Danger Zone")
+        if st.button("🧨 Factory Reset", disabled=(st.text_input("Type WIPE")!="WIPE")):
+            sh = get_sheet_object()
+            for s in ["CustomerDues", "PaymentsReceived"]: sh.worksheet(s).clear()
+            st.success("Reset Complete!")
 
 # --- MAIN APP LOGIC ---
 try:
