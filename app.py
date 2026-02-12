@@ -52,7 +52,7 @@ st.markdown("""
     div[data-testid="metric-container"] label { color: #555 !important; }
     div[data-testid="metric-container"] div { color: #000 !important; }
     
-    /* Splash Screen CSS */
+    /* Splash Screen */
     .splash-container {
         display: flex; justify-content: center; align-items: center;
         height: 70vh; flex-direction: column; animation: fadeOut 2.5s forwards;
@@ -144,7 +144,6 @@ def get_party_master_dict():
     max_s = 0
     
     if not df.empty:
-        # Normalize columns if needed
         cols = df.columns.tolist()
         name_col = cols[0]
         code_col = cols[1] if len(cols) > 1 else None
@@ -152,34 +151,22 @@ def get_party_master_dict():
         for _, row in df.iterrows():
             name = str(row[name_col]).strip()
             code = str(row[code_col]).strip() if code_col and row[code_col] else ""
-            
             if name:
                 party_map[name] = code
-                # Track max codes
                 if code.startswith("R"):
                     try: max_r = max(max_r, int(code[1:]))
                     except: pass
                 elif code.startswith("S"):
                     try: max_s = max(max_s, int(code[1:]))
                     except: pass
-                    
     return party_map, max_r, max_s
 
 def generate_new_code(party_type, max_r, max_s):
-    """Generates R... for Retailer, S... for Supplier"""
-    if party_type == "Retailer":
-        return f"R{max_r + 1}"
-    elif party_type == "Supplier":
-        return f"S{max_s + 1}"
+    if party_type == "Retailer": return f"R{max_r + 1}"
+    elif party_type == "Supplier": return f"S{max_s + 1}"
     return ""
 
 def process_scanned_party(scanned_name, party_type, party_map, max_r, max_s):
-    """
-    1. Check fuzzy match in existing map.
-    2. If found, use existing code.
-    3. If new, generate NEW code.
-    Returns: (Final Name String, Code, Is_New)
-    """
     clean_name = scanned_name.strip()
     if not clean_name: return "", "", False
 
@@ -190,51 +177,31 @@ def process_scanned_party(scanned_name, party_type, party_map, max_r, max_s):
     if matches:
         matched_name = matches[0]
         code = party_map.get(matched_name, "")
-        
-        # If existing party has no code, generate one now
-        if not code:
+        if not code: # Existing but no code
             code = generate_new_code(party_type, max_r, max_s)
-            # Update temp map for this session
             party_map[matched_name] = code 
-            if party_type == "Retailer": max_r += 1
-            else: max_s += 1
-            return f"{matched_name} ({code})", code, True # Update master needed
-            
-        return f"{matched_name} ({code})", code, False # No update needed
-    
+            return f"{matched_name} ({code})", code, True 
+        return f"{matched_name} ({code})", code, False 
     else:
-        # 2. New Party -> Generate Code
+        # 2. New Party
         code = generate_new_code(party_type, max_r, max_s)
-        # Update counters locally
-        if party_type == "Retailer": max_r += 1
-        else: max_s += 1
-        
-        return f"{clean_name} ({code})", code, True # New entry needed
+        return f"{clean_name} ({code})", code, True 
 
 def update_party_master_batch(new_entries):
-    """
-    new_entries: list of tuples (Name, Code)
-    Adds them to Party_Master sheet.
-    """
     if not new_entries: return
     try:
         sh = get_sheet_object()
         ws = sh.worksheet("Party_Master")
-        # Check if "Code" column exists, if not add it
         headers = ws.row_values(1)
-        if len(headers) < 2:
-            ws.update_cell(1, 2, "Code")
-            
-        # Append rows
+        if len(headers) < 2: ws.update_cell(1, 2, "Code")
+        
         rows_to_add = [[name, code] for name, code in new_entries]
         ws.append_rows(rows_to_add)
         st.cache_data.clear()
-        st.toast(f"✅ Auto-assigned codes for {len(rows_to_add)} parties!")
-    except Exception as e:
-        print(f"Master update error: {e}")
+        st.success(f"✅ Auto-assigned codes for {len(rows_to_add)} parties!")
+    except Exception as e: print(f"Master update error: {e}")
 
 def get_all_party_names_display():
-    # Helper for dropdowns
     pm, _, _ = get_party_master_dict()
     display_list = []
     for name, code in pm.items():
@@ -273,8 +240,7 @@ def compress_image(image_file):
         doc = fitz.open(stream=image_file.read(), filetype="pdf")
         images = []
         for i in range(doc.page_count):
-            page = doc.load_page(i)
-            pix = page.get_pixmap(dpi=200)
+            page = doc.load_page(i); pix = page.get_pixmap(dpi=200)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             images.append(img)
         if not images: return None
@@ -287,14 +253,12 @@ def compress_image(image_file):
         img = final_img
     else:
         img = Image.open(image_file)
-    
     if img.mode in ("RGBA", "P"): img = img.convert("RGB")
     max_width = 2500 
     if img.width > max_width:
         ratio = max_width / img.width
         new_height = int(img.height * ratio)
         img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
-
     output = io.BytesIO()
     img.save(output, format="JPEG", quality=95, optimize=True)
     output.seek(0)
@@ -324,11 +288,7 @@ def analyze_image_generic(prompt, file_buffer):
         api_key = st.secrets["OPENAI_API_KEY"]
         client = OpenAI(api_key=api_key)
         b64 = base64.b64encode(file_buffer.read()).decode('utf-8')
-        resp = client.chat.completions.create(model="gpt-4o", 
-            temperature=0, 
-            messages=[
-            {"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}
-        ])
+        resp = client.chat.completions.create(model="gpt-4o", temperature=0, messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}])
         s = resp.choices[0].message.content
         return json.loads(s[s.find('{'):s.rfind('}')+1])
     except: return None
@@ -396,9 +356,6 @@ def screen_manual():
             elif "Received" in t_type: sh.worksheet("PaymentsReceived").append_row([str(d), p, a, m])
             elif "Paid" in t_type: sh.worksheet("PaymentsToSuppliers").append_row([str(d), p, a, m])
             elif "Purchase" in t_type: sh.worksheet("GoodsReceived").append_row([str(d), p, m, a])
-            
-            # Manual entry update check
-            raw_name = extract_name_display(p)
             st.success("Saved!"); time.sleep(1); st.session_state.page = 'home'; st.rerun()
 
 def screen_ledger():
@@ -523,7 +480,7 @@ def screen_scan_hub():
         party_map, max_r, max_s = get_party_master_dict()
         new_master_entries = [] # To save later
 
-        # Helper to Process DataFrames with Smart Match & Code Gen
+        # Helper to Process DataFrames
         def process_df(key, party_type):
             nonlocal max_r, max_s
             rows = d.get(key, [])
@@ -538,13 +495,13 @@ def screen_scan_hub():
                 # AUTO CODE LOGIC
                 final_name, code, is_new = process_scanned_party(raw_name, party_type, party_map, max_r, max_s)
                 
-                # Update local counters if new code was generated
+                # Update local counters
                 if is_new:
                     if party_type == "Retailer": max_r += 1
                     else: max_s += 1
                     new_master_entries.append((extract_name_display(final_name), code))
                 
-                # Add Warning Icon for Low Confidence
+                # Add Warning Icon
                 display_amt = f"{amt}"
                 if conf != "High": display_amt = f"⚠️ {amt}"
                 
@@ -554,7 +511,6 @@ def screen_scan_hub():
                     "Confidence": conf, 
                     "Date": r.get('Date', str(final_dt))
                 })
-                
             return pd.DataFrame(processed), processed
 
         # PROCESS ALL SECTIONS
@@ -566,13 +522,10 @@ def screen_scan_hub():
         # DISPLAY
         st.write("Sales (Retailer Dues):")
         ed_s = st.data_editor(df_s, num_rows="dynamic", use_container_width=True, key="ed_s")
-        
         st.write("Payments Received:")
         ed_p = st.data_editor(df_p, num_rows="dynamic", use_container_width=True, key="ed_p")
-
         st.write("Payments to Suppliers:")
         ed_sup = st.data_editor(df_sup, num_rows="dynamic", use_container_width=True, key="ed_sup")
-
         st.write("Purchases:")
         ed_pur = st.data_editor(df_pur, num_rows="dynamic", use_container_width=True, key="ed_pur")
         
@@ -585,7 +538,7 @@ def screen_scan_hub():
 
             def get_r_dt(r): return r['Date'] if 'Date' in r and r['Date'] else str(final_dt)
 
-            # 2. Save Transactions (Using Display Name which includes Code)
+            # 2. Save Transactions
             if not ed_s.empty:
                 rows = [[get_r_dt(r), r['Party'], r['Amount']] for _, r in ed_s.iterrows()]
                 sh.worksheet("CustomerDues").append_rows(rows)
