@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+*.log
+gautam_pharma.log
+.env
+*.bak
