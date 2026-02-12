@@ -51,10 +51,41 @@ st.markdown("""
     div[data-testid="metric-container"] { background-color: white !important; border: 1px solid #eee !important; box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important; }
     div[data-testid="metric-container"] label { color: #555 !important; }
     div[data-testid="metric-container"] div { color: #000 !important; }
+    
+    /* Splash Screen CSS */
+    .splash-container {
+        display: flex; justify-content: center; align-items: center;
+        height: 70vh; flex-direction: column; animation: fadeOut 2.5s forwards;
+    }
+    .splash-container img {
+        width: 150px; margin-bottom: 20px; border-radius: 20px;
+        box-shadow: 0 0 40px rgba(41, 121, 255, 0.25);
+    }
+    @keyframes fadeOut {
+        0% { opacity: 0; transform: scale(0.8); }
+        20% { opacity: 1; transform: scale(1); }
+        80% { opacity: 1; transform: scale(1); }
+        100% { opacity: 0; transform: scale(1.1); }
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- UTILS ---
+# --- 1. CRITICAL FUNCTIONS ---
+def show_splash_screen():
+    if "splash_shown" not in st.session_state:
+        splash = st.empty()
+        with splash.container():
+            logo_url = "https://raw.githubusercontent.com/gautam-pharma-ledger/ledger-app/main/Photoroom-20260102_114853282.png"
+            st.markdown(f"""
+            <div class="splash-container">
+                <img src="{logo_url}">
+                <div style="font-size: 26px; color: #2c3e50; font-weight: 700;">Gautam Pharma</div>
+            </div>""", unsafe_allow_html=True)
+            time.sleep(2.5)
+        splash.empty()
+        st.session_state["splash_shown"] = True
+
+# --- 2. UTILS ---
 @st.cache_resource
 def get_credentials():
     try: return Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
@@ -366,11 +397,8 @@ def screen_manual():
             elif "Paid" in t_type: sh.worksheet("PaymentsToSuppliers").append_row([str(d), p, a, m])
             elif "Purchase" in t_type: sh.worksheet("GoodsReceived").append_row([str(d), p, m, a])
             
-            # Basic update if manual entry is a new party
-            # (Ideally manual entry dropdown is exhaustive, but just in case)
+            # Manual entry update check
             raw_name = extract_name_display(p)
-            # Here we just blindly add if it looks new, simplest approach for manual
-            # But normally p is selected from list, so it exists.
             st.success("Saved!"); time.sleep(1); st.session_state.page = 'home'; st.rerun()
 
 def screen_ledger():
@@ -611,4 +639,11 @@ try:
     elif st.session_state.page == 'voice': screen_voice_assistant()
     elif st.session_state.page == 'reminders': screen_reminders()
     elif st.session_state.page == 'tools': screen_tools()
-except Exception as e: st.error("Error"); st.code(traceback.format_exc())
+except Exception as e:
+    error_msg = traceback.format_exc()
+    st.error("⚠️ An error occurred!")
+    admin_phone = "918825155422"
+    encoded_err = urllib.parse.quote(f"🚨 App Error Report:\n\n{str(e)}\n\nTechnical Details:\n{error_msg}")
+    wa_link = f"https://wa.me/{admin_phone}?text={encoded_err}"
+    st.link_button("📤 Send Error to Admin (WhatsApp)", wa_link, type="primary")
+    with st.expander("Technical Details"): st.code(error_msg)
