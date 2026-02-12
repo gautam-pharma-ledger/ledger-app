@@ -34,27 +34,73 @@ except ImportError:
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Gautam Pharma", layout="centered", page_icon="💊")
 
-# --- CUSTOM CSS ---
+# --- CUSTOM CSS: FORCE VISIBILITY ---
 st.markdown("""
     <style>
     .stApp { background-color: #f4f7f6 !important; color: #000000 !important; }
-    button[data-baseweb="tab"] { background-color: #ffffff !important; color: #000000 !important; border: 1px solid #ddd !important; font-weight: 600 !important; }
-    button[data-baseweb="tab"][aria-selected="true"] { background-color: #e3f2fd !important; color: #1565c0 !important; border-color: #1565c0 !important; }
-    .stTextInput input, .stDateInput input, .stSelectbox div[data-baseweb="select"] { background-color: #ffffff !important; color: #000000 !important; border: 1px solid #ccc !important; }
-    .stButton > button { background-color: #ffffff !important; color: #000000 !important; border: 1px solid #ccc !important; font-weight: bold !important; }
-    div[data-testid="stVerticalBlock"] > div > div > div > div > button[kind="primary"] { background-color: #d32f2f !important; color: #ffffff !important; border: none !important; }
-    div[data-testid="stFileUploader"] { background-color: #ffffff !important; border: 1px dashed #aaa !important; padding: 10px; border-radius: 8px; }
+    
+    button[data-baseweb="tab"] {
+        background-color: #ffffff !important; color: #000000 !important;
+        border: 1px solid #ddd !important; font-weight: 600 !important;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        background-color: #e3f2fd !important; color: #1565c0 !important;
+        border-color: #1565c0 !important;
+    }
+
+    .stTextInput input, .stDateInput input, .stSelectbox div[data-baseweb="select"] {
+        background-color: #ffffff !important; color: #000000 !important;
+        border: 1px solid #ccc !important;
+    }
+    ul[data-baseweb="menu"] { background-color: #ffffff !important; }
+    li[data-baseweb="option"] { color: #000000 !important; }
+
+    .stButton > button {
+        background-color: #ffffff !important; color: #000000 !important;
+        border: 1px solid #ccc !important; font-weight: bold !important;
+    }
+    div[data-testid="stVerticalBlock"] > div > div > div > div > button[kind="primary"] {
+        background-color: #d32f2f !important; color: #ffffff !important; border: none !important;
+    }
+
+    div[data-testid="stFileUploader"] {
+        background-color: #ffffff !important; border: 1px dashed #aaa !important;
+        padding: 10px; border-radius: 8px;
+    }
     div[data-testid="stFileUploader"] span { color: #000 !important; }
     div[data-testid="stFileUploader"] small { color: #333 !important; }
-    .party-card { background-color: #ffffff !important; padding: 15px; border-radius: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 10px; border: 1px solid #e0e0e0; }
+
+    .party-card {
+        background-color: #ffffff !important; padding: 15px; border-radius: 12px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 10px; border: 1px solid #e0e0e0;
+    }
     .bal-green { color: #2e7d32 !important; font-weight: 700; font-size: 16px; text-align: right; }
     .bal-red { color: #c62828 !important; font-weight: 700; font-size: 16px; text-align: right; }
-    div[data-testid="metric-container"] { background-color: white !important; border: 1px solid #eee !important; box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important; }
+    .sub-text { font-size: 12px; color: #555 !important; text-align: right; }
+    .party-name { font-size: 16px; font-weight: 600; color: #000 !important; }
+    .date-text { font-size: 12px; color: #666 !important; }
+    
+    div[data-testid="metric-container"] {
+        background-color: white !important; border: 1px solid #eee !important;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important;
+    }
     div[data-testid="metric-container"] label { color: #555 !important; }
     div[data-testid="metric-container"] div { color: #000 !important; }
-    .splash-container { display: flex; justify-content: center; align-items: center; height: 70vh; flex-direction: column; animation: fadeOut 2.5s forwards; }
-    .splash-container img { width: 150px; margin-bottom: 20px; border-radius: 20px; box-shadow: 0 0 40px rgba(41, 121, 255, 0.25); }
-    @keyframes fadeOut { 0% { opacity: 0; transform: scale(0.8); } 20% { opacity: 1; transform: scale(1); } 80% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1.1); } }
+
+    .splash-container {
+        display: flex; justify-content: center; align-items: center;
+        height: 70vh; flex-direction: column; animation: fadeOut 2.5s forwards;
+    }
+    .splash-container img {
+        width: 150px; margin-bottom: 20px; border-radius: 20px;
+        box-shadow: 0 0 40px rgba(41, 121, 255, 0.25);
+    }
+    @keyframes fadeOut {
+        0% { opacity: 0; transform: scale(0.8); }
+        20% { opacity: 1; transform: scale(1); }
+        80% { opacity: 1; transform: scale(1); }
+        100% { opacity: 0; transform: scale(1.1); }
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -178,12 +224,14 @@ def update_party_master_if_new(party_list):
         ws = sh.worksheet("Party_Master")
         existing_data = ws.col_values(1) # Assuming Name is Col 1
         existing_set = set([x.strip().lower() for x in existing_data if x])
+        
         new_rows = []
         for p in party_list:
             clean_p = p.strip()
             if clean_p and clean_p.lower() not in existing_set:
                 new_rows.append([clean_p])
                 existing_set.add(clean_p.lower())
+        
         if new_rows:
             ws.append_rows(new_rows)
             st.cache_data.clear()
@@ -191,17 +239,21 @@ def update_party_master_if_new(party_list):
     except Exception as e:
         print(f"Error updating master: {e}")
 
-# --- 4. AI & DRIVE HELPERS (MULTI-PAGE PDF) ---
+# --- 4. AI & DRIVE HELPERS (HD SCANNER) ---
 def compress_image(image_file):
     if image_file.type == "application/pdf":
         if not PDF_AVAILABLE: return None
         doc = fitz.open(stream=image_file.read(), filetype="pdf")
+        
+        # STITCH PAGES
         images = []
         for i in range(doc.page_count):
             page = doc.load_page(i)
-            pix = page.get_pixmap()
+            # Increase DPI for clearer text
+            pix = page.get_pixmap(dpi=200) 
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             images.append(img)
+        
         if not images: return None
         total_height = sum(img.height for img in images)
         max_width = max(img.width for img in images)
@@ -215,13 +267,17 @@ def compress_image(image_file):
         img = Image.open(image_file)
     
     if img.mode in ("RGBA", "P"): img = img.convert("RGB")
-    max_width = 1200
+    
+    # INCREASE RESOLUTION FOR HANDWRITING
+    max_width = 2500 # Was 1200 - Increased for HD Scanning
     if img.width > max_width:
         ratio = max_width / img.width
         new_height = int(img.height * ratio)
         img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
+
     output = io.BytesIO()
-    img.save(output, format="JPEG", quality=60, optimize=True)
+    # High Quality JPEG
+    img.save(output, format="JPEG", quality=90, optimize=True)
     output.seek(0)
     return output
 
@@ -231,11 +287,13 @@ def upload_to_drive(file_buffer, filename):
         file_buffer.seek(0)
         service = get_drive_service()
         if not service: return None
+        
         res = service.files().list(q="name='Gautam_Scans' and mimeType='application/vnd.google-apps.folder'").execute()
         if not res.get('files'):
             f = service.files().create(body={'name': 'Gautam_Scans', 'mimeType': 'application/vnd.google-apps.folder'}, fields='id').execute()
             fid = f.get('id')
         else: fid = res.get('files')[0].get('id')
+        
         media = MediaIoBaseUpload(file_buffer, mimetype='image/jpeg', resumable=True)
         f = service.files().create(body={'name': filename, 'parents': [fid]}, media_body=media, fields='id, webViewLink').execute()
         service.permissions().create(fileId=f.get('id'), body={'type': 'anyone', 'role': 'reader'}).execute()
@@ -249,7 +307,9 @@ def analyze_image_generic(prompt, file_buffer):
         api_key = st.secrets["OPENAI_API_KEY"]
         client = OpenAI(api_key=api_key)
         b64 = base64.b64encode(file_buffer.read()).decode('utf-8')
-        resp = client.chat.completions.create(model="gpt-4o", messages=[
+        resp = client.chat.completions.create(model="gpt-4o", 
+            temperature=0, # STRICT MODE: Reduces hallucination
+            messages=[
             {"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}
         ])
         s = resp.choices[0].message.content
@@ -426,30 +486,36 @@ def screen_scan_hub():
                 if not compressed: st.error("Error processing file."); return
                 link = upload_to_drive(compressed, f"Journal_{date.today()}.jpg")
                 
-                # --- NEW SMART PROMPT FOR HANDWRITTEN FORM ---
-                p = """Analyze this handwritten journal page. It has 4 specific sections (quadrants):
-                1. Top Left: 'PAYMENT RECEIVED' -> These are PAYMENTS from Customers (Credit).
-                2. Bottom Left: 'RETAILERS DUES' -> These are SALES to Customers (Debit).
-                3. Bottom Right: 'PAYMENT TO SUPPLIER' -> These are PAYMENTS OUT (Debit).
-                4. Top Right: 'PURCHASE DETAILS' -> These are PURCHASES (Credit).
+                # --- NEW SMART PROMPT FOR HANDWRITTEN FORM (LINE-BY-LINE) ---
+                p = """Analyze this handwritten journal page. It has 4 specific sections (quadrants).
                 
-                Extract the Date from top right.
-                For each entry, extract 'Party' and 'Amount'.
+                1. FIND DATE: Top Right (e.g. 17/1/2026).
+                
+                2. BOTTOM LEFT BOX ('RETAILERS DUES'): 
+                   - This is SALES.
+                   - Read LINE BY LINE.
+                   - Format is usually: [Amount] [Party Name].
+                   - Example: '7903 Raj Medical', '2833 Tunni ji'.
+                   - Extract ALL lines.
+                
+                3. BOTTOM RIGHT BOX ('PAYMENT TO SUPPLIER'):
+                   - This is PAYMENTS OUT.
+                   - Read LINE BY LINE.
+                   - Format: [Amount] [Party Name].
                 
                 Return JSON: 
                 {
                     "Date": "YYYY-MM-DD", 
                     "Sales": [{"Party": "Name", "Amount": 0}], 
-                    "Payments": [{"Party": "Name", "Amount": 0}],
-                    "SupplierPayments": [{"Party": "Name", "Amount": 0}],
-                    "Purchases": [{"Party": "Name", "Amount": 0}]
+                    "Payments": [],
+                    "SupplierPayments": [{"Party": "Name", "Amount": 0}]
                 }"""
                 
                 data = analyze_image_generic(p, compressed)
                 if data: st.session_state.scan_res = data; st.session_state.scan_link = link; st.rerun()
 
     # ----------------------------------------------------
-    # TAB 2: LEDGER (STATEMENT MODE - FIXED)
+    # TAB 2: LEDGER (STATEMENT MODE)
     # ----------------------------------------------------
     with t2: 
         st.write("Digitize Party Statement (PDF/Image)")
